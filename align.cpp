@@ -184,16 +184,13 @@ std::string polish(std::string &toPolish, std::vector<std::string> &reads, std::
     string command2 = path_racon + " " + readsFile + " " + alignmentFile + " " + seqFile + " > " + polished + " 2> logracon.tmp.txt";
     int racon_success = system(command2.c_str());
 
-    if (racon_success != 0){
-        cout << "Racon failed" << endl;
-        exit(1);
+    string polishedSeq = toPolish;
+    if (racon_success == 0){
+        //read the polished sequence
+        ifstream polishedStream(polished);
+        getline(polishedStream, polishedSeq);
+        polishedStream.close();
     }
-
-    //read the polished sequence
-    ifstream polishedStream(polished);
-    string polishedSeq;
-    getline(polishedStream, polishedSeq);
-    polishedStream.close();
 
     //delete the temporary files
     system("rm *.tmp_polish.*");

@@ -190,23 +190,51 @@ void inventoriate_bridges(std::string gaf_file, std::vector<Bridge>& bridges, st
 
         //see if there are links between the breakpoints
         for (int b = 0; b < mapping.second.size(); b++){
-            if (b < mapping.second.size()-1 && mapping.second[b].breakpoint2 == true && mapping.second[b+1].breakpoint1 == true
-                && mapping.second[b+1].pos_on_read1-mapping.second[b].pos_on_read2 > 0 ){ //then the two breakpoints are linked !! (just don't use link the breakpoint if the distance is negative, which means an overlap)
+            if (b < mapping.second.size()-1 && mapping.second[b].breakpoint2 == true && mapping.second[b+1].breakpoint1 == true ){ //then the two breakpoints are linked !!
 
-                Bridge bridge;
-                bridge.contig1 = mapping.second[b].contig2;
-                bridge.pos_read_on_contig1 = mapping.second[b].pos_on_read2;
-                bridge.position1 = mapping.second[b].position_on_contig2;
-                bridge.strand1 = mapping.second[b].orientation_on_contig2;
+                //if there is only a small overlap between the two mappings, adjust the overlap to remove it
+                if (mapping.second[b+1].pos_on_read1-mapping.second[b].pos_on_read2 < 0){
+                    int overlap_length = mapping.second[b].pos_on_read2 - mapping.second[b+1].pos_on_read1;
+                    if (overlap_length < 0.1*(mapping.second[b].pos_on_read2-mapping.second[b].pos_on_read1) && overlap_length < 0.1*(mapping.second[b+1].pos_on_read2-mapping.second[b+1].pos_on_read1)){
+                        //choose which overlap to trim based on alphabetical order of the contigs
+                        if (mapping.second[b].contig2 < mapping.second[b+1].contig1){
+                            mapping.second[b].pos_on_read2 -= overlap_length;
+                            if (mapping.second[b].orientation_on_contig2 == false){
+                                mapping.second[b].position_on_contig2 += overlap_length;
+                            }
+                            else{
+                                mapping.second[b].position_on_contig2 -= overlap_length;
+                            }
+                        }
+                        else{
+                            mapping.second[b+1].pos_on_read1 += overlap_length;
+                            if (mapping.second[b+1].orientation_on_contig1 == false){
+                                mapping.second[b+1].position_on_contig1 += overlap_length;
+                            }
+                            else{
+                                mapping.second[b+1].position_on_contig1 -= overlap_length;
+                            }
+                        }
+                    }
+                }
 
-                bridge.contig2 = mapping.second[b+1].contig1;
-                bridge.pos_read_on_contig2 = mapping.second[b+1].pos_on_read1;
-                bridge.position2 = mapping.second[b+1].position_on_contig1;
-                bridge.strand2 = mapping.second[b+1].orientation_on_contig1;
+                if (mapping.second[b+1].pos_on_read1-mapping.second[b].pos_on_read2 >= 0) { //if there is still an overlap, then we can't use this bridge
 
-                bridge.read_name = mapping.first;
+                    Bridge bridge;
+                    bridge.contig1 = mapping.second[b].contig2;
+                    bridge.pos_read_on_contig1 = mapping.second[b].pos_on_read2;
+                    bridge.position1 = mapping.second[b].position_on_contig2;
+                    bridge.strand1 = mapping.second[b].orientation_on_contig2;
 
-                bridges.push_back(bridge);
+                    bridge.contig2 = mapping.second[b+1].contig1;
+                    bridge.pos_read_on_contig2 = mapping.second[b+1].pos_on_read1;
+                    bridge.position2 = mapping.second[b+1].position_on_contig1;
+                    bridge.strand2 = mapping.second[b+1].orientation_on_contig1;
+
+                    bridge.read_name = mapping.first;
+
+                    bridges.push_back(bridge);
+                }
             }
         }
     }
@@ -410,8 +438,8 @@ void transform_bridges_in_links(std::vector<SolidBridge>& solid_bridges, std::st
             std::getline(read_stream, line);
             
             //retrieve the gap filling sequence only, with 100 bp on each side
-            int start = max(solid_bridge.pos_read_on_contig1[read_num]-100, 0);
-            int end = min(solid_bridge.pos_read_on_contig2[read_num]+100, (int) line.size());
+            int start = max(solid_bridge.pos_read_on_contig1[read_num]-300, 0);
+            int end = min(solid_bridge.pos_read_on_contig2[read_num]+300, (int) line.size());
             if (solid_bridge.strand[read_num] == true){
                 reads.push_back(line.substr(start, end-start));
             }
@@ -943,13 +971,14 @@ void shave_and_pop(std::string input_file, std::string output_file, int max_leng
 int main(int argc, char *argv[])
 {
 
-    string version = "0.1";
+    string version = "0.1.1";
     string last_update = "2024-01-24";
 
     //build a clipp.h command line parser
     bool help = false;
     bool print_version = false;
     string input_assembly, input_reads, gaf_file, output_scaffold;
+    int num_threads = 1;
     string path_minigraph = "minigraph";
     string path_minimap2 = "minimap2";
     string path_racon = "racon";
@@ -957,7 +986,8 @@ int main(int argc, char *argv[])
         clipp::required("-i", "--input_assembly").doc("input assembly in gfa format") & clipp::value("input_assembly", input_assembly),
         clipp::required("-r", "--input_reads").doc("input reads in fasta/q format") & clipp::value("input_reads", input_reads),
         clipp::required("-o", "--output_assembly").doc("output assembly in gfa format") & clipp::value("output_assembly", output_scaffold),
-        clipp::option("-g", "--gaf_file").doc("gaf file. Will be generated with minigraph if not provided") & clipp::value("gaf_file", gaf_file),
+        clipp::option("-t", "--threads").doc("number of threads to use for minigraph [1]") & clipp::value("threads", num_threads),
+        clipp::option("-g", "--gaf_file").doc("gaf file (NO SECONDARY ALIGNMENTS). Will be generated with minigraph if not provided") & clipp::value("gaf_file", gaf_file),
         clipp::option("-n", "--minigraph").doc("path to minigraph") & clipp::value("minigraph", path_minigraph),
         clipp::option("-m", "--minimap2").doc("path to minimap2") & clipp::value("minimap2", path_minimap2),
         clipp::option("-r", "--racon").doc("path to racon") & clipp::value("racon", path_racon),
@@ -1005,7 +1035,7 @@ int main(int argc, char *argv[])
     cout << "Checking dependencies..." << endl;
     bool minimap_ok, minigraph_ok, racon_ok;
     minimap_ok = (system((path_minimap2 + " -h >trash.tmp 2>trash.tmp").c_str()) == 0);
-    minigraph_ok = (system((path_minigraph + " -h >trash.tmp 2>trash.tmp").c_str()) == 0);
+    minigraph_ok = (system((path_minigraph + " --version >trash.tmp 2>trash.tmp").c_str()) == 0);
     racon_ok = (system((path_racon + " -h >trash.tmp 2>trash.tmp").c_str()) == 0);
     system("rm trash.tmp");
 
@@ -1020,12 +1050,12 @@ int main(int argc, char *argv[])
         std::cout << "-------------------------------" << std::endl;
 
         if (!minimap_ok || !minigraph_ok || !racon_ok){
-            std::cout << "Error: some dependencies are missing. Please install them and try again." << std::endl;
+            std::cout << "Error: some dependencies are missing. Please install them or provide a valid path with the options." << std::endl;
             return 1;
         }
     }
     else {
-        std::cout << "______________________________" << std::endl;
+        std::cout << "_______________________________" << std::endl;
         std::cout << "|    Dependency     |  Found  |" << std::endl;
         std::cout << "|-------------------|---------|" << std::endl;
         std::cout << "|    minimap2       |   " << (minimap_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
@@ -1033,7 +1063,7 @@ int main(int argc, char *argv[])
         std::cout << "-------------------------------" << std::endl;
 
         if (!minimap_ok || !racon_ok){
-            std::cout << "Error: some dependencies are missing. Please install them and try again." << std::endl;
+            std::cout << "Error: some dependencies are missing. Please install them or provide a valid path with the options." << std::endl;
             return 1;
         }
     }
@@ -1051,7 +1081,7 @@ int main(int argc, char *argv[])
 
     cout << "Checking file formats..." << endl;
     //print a table of the input and output files
-    std::cout << "________________________________" << std::endl;
+    std::cout << "_________________________________" << std::endl;
     std::cout << "|       File        |  Format   |" << std::endl;
     std::cout << "|-------------------|-----------|" << std::endl;
     std::cout << "|  input_assembly   |  " << (input_assembly_is_gfa ? GREEN_TEXT "  gfa  " : RED_TEXT "not gfa") << RESET_TEXT "  |" << std::endl;
@@ -1060,11 +1090,25 @@ int main(int argc, char *argv[])
     if (gaf_file != ""){
         std::cout << "|  gaf_file         |  " << (gaf_file_is_gaf ? GREEN_TEXT "  gaf  " : RED_TEXT "not gaf") << RESET_TEXT "  |" << std::endl;
     }
-    std::cout << "---------------------------------" << std::endl;
+    std::cout << "---------------------------------" << std::endl << std::endl;
 
     if (!input_assembly_is_gfa || (!input_reads_is_fasta && !input_reads_is_fastq) || !output_scaffold_is_gfa || (gaf_file != "" && !gaf_file_is_gaf)){
         std::cout << "Error: some input or output files are not in the right format. Please check the format and try again." << std::endl;
         return 1;
+    }
+
+    //if the gaf file is not provided, create it with minigraph
+    if (gaf_file == ""){
+        gaf_file = "reads_aligned_on_assembly.gaf";
+        cout << "0) Creating a gaf file by aligning reads on assembly with minigraph, creating the file " << gaf_file << endl;
+        auto minigraph_run = system((path_minigraph + " -c --secondary=no -t " + std::to_string(num_threads) + " " + input_assembly + " " + input_reads + " >" + gaf_file + " 2> logminigraph.gt.txt").c_str());
+        if (minigraph_run != 0){
+            cout << "Error: minigraph failed. Please check the log file logminigraph.gt.txt and try again. The command line tried was:" << endl;
+            cout << path_minigraph + " -c --secondary=no -t " + std::to_string(num_threads) + " " + input_assembly + " " + input_reads + " >" + gaf_file + " 2> logminigraph.gt.txt" << endl;
+            return 1;
+        }
+        //delete the log file
+        system("rm logminigraph.gt.txt");
     }
 
     //inventoriate the bridges
@@ -1089,7 +1133,7 @@ int main(int argc, char *argv[])
 
     //shave the graph of small dead ends, that probably result from polishing errors
     cout << "5) Shaving the graph of small dead ends and popping small bubbles that may have appeared in previous steps..." << endl;
-    shave_and_pop(tmp_gfa, output_scaffold, 20, 20);
+    shave_and_pop(tmp_gfa, output_scaffold, 60, 20);
 
     //remove the temporary gfa file
     system(("rm " + tmp_gfa).c_str());

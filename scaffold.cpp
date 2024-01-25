@@ -971,8 +971,8 @@ void shave_and_pop(std::string input_file, std::string output_file, int max_leng
 int main(int argc, char *argv[])
 {
 
-    string version = "0.1.1";
-    string last_update = "2024-01-24";
+    string version = "0.1.2";
+    string last_update = "2024-01-25";
 
     //build a clipp.h command line parser
     bool help = false;

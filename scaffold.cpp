@@ -1,6 +1,7 @@
 //author: Roland Faure
 //creation date: 2024-01-17
 //aim of the program: scaffold an assembly based on reads. Also break existing contigs if necessary
+
 #include "scaffold.h"
 #include "align.h"
 
@@ -31,6 +32,9 @@ using std::max;
 #define RED_TEXT "\033[1;31m"
 #define GREEN_TEXT "\033[1;32m"
 #define RESET_TEXT "\033[0m"
+
+string version = "0.1.4";
+string last_update = "2024-02-16";
 
 vector<string> split(string& s, string& delimiter){
     vector<string> res;
@@ -84,7 +88,209 @@ string reverse_complement(string seq){
 }
 
 /**
+ * @brief Module to inventoriate all the reads that do not map well on the assembly and re-assemble them using raven
+ * 
+ * @param gaf_file 
+ * @param read_file 
+ * @param new_assembly_file 
+ * @param new_gaf_file 
+ * @param path_minimap2 
+ * @param path_miniasm 
+ * @param path_minipolish 
+ */
+void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std::string old_assembly, std::string new_assembly_file, std::string new_gaf_file, std::string path_raven, std::string path_minigraph, int threads){
+    //go through the gaf file and retrieve the parts of the reads that are not aligned (at least too_long bp)
+    string file_of_unaligned_reads = "tmp_unaligned_reads.fa";
+    string file_of_full_unaligned_reads = "tmp_full_unaligned_reads.fa";
+    std::ifstream gaf_stream(gaf_file);
+    int too_long = 1000; //minimum length of unaligned part to consider it worth reassembling
+
+    unordered_map<string,vector<pair<int,int>>> unaligned_reads; //name of the read and the start and end of the unaligned part
+
+    //first inventoriate the unaligned parts of the reads
+    {
+        string line;
+        string current_read;
+        int current_length;
+        vector<pair<int,int>> aligned_part_of_this_read;
+        while (std::getline(gaf_stream, line)){
+            string name_of_read;
+            int length_of_read;
+            int start_of_mapping;
+            int end_of_mapping;
+            string strand;
+            string path;
+            int path_length;
+            int path_start;
+            int path_end;
+            string nothing;
+            int quality;
+
+            std::istringstream iss(line);
+            iss >> name_of_read >> length_of_read >> start_of_mapping >> end_of_mapping >> strand >> path >> path_length >> path_start >> path_end >> nothing >> nothing >> quality;
+
+            if (name_of_read != current_read){
+                if (aligned_part_of_this_read.size() > 0){
+                    //sort the aligned parts of the read by start position
+                    std::sort(aligned_part_of_this_read.begin(), aligned_part_of_this_read.end(), [](pair<int,int>& a, pair<int,int>& b){return a.first < b.first;});
+                    //then go through the aligned parts and see if there are unaligned parts
+                    int start_of_unaligned = 0;
+                    for (auto part : aligned_part_of_this_read){
+                        if (part.first-start_of_unaligned > too_long){
+                            if (unaligned_reads.find(current_read) == unaligned_reads.end()){
+                                unaligned_reads[current_read] = {};
+                            }
+                            unaligned_reads[current_read].push_back({start_of_unaligned, part.first});
+                        }
+                        start_of_unaligned = part.second;
+                    }
+                    if (current_length-start_of_unaligned > too_long){
+                        if (unaligned_reads.find(current_read) == unaligned_reads.end()){
+                            unaligned_reads[current_read] = {};
+                        }
+                        unaligned_reads[current_read].push_back({start_of_unaligned, current_length});
+                    }
+                }
+                current_length = length_of_read;
+                current_read = name_of_read;
+                aligned_part_of_this_read.clear();
+                aligned_part_of_this_read.push_back({start_of_mapping, end_of_mapping});
+            }
+            else{
+                if (quality == 60 && end_of_mapping-start_of_mapping > too_long){
+                    aligned_part_of_this_read.push_back({start_of_mapping, end_of_mapping});
+                }
+            }
+        }
+        gaf_stream.close();
+    }
+
+    //now output the unaligned parts of the reads in a file
+    {
+        std::ifstream read_stream(read_file);
+        std::ofstream unaligned_parts_of_reads(file_of_unaligned_reads);
+        std::ofstream full_unaligned_parts_of_reads(file_of_full_unaligned_reads);
+        string line;
+        string current_read;
+        string current_seq;
+        
+        while (std::getline(read_stream, line)){
+            if (line[0] == '>' || line[0] == '@'){
+                if (current_read != ""){
+                    if (unaligned_reads.find(current_read) != unaligned_reads.end()){
+                        for (auto part : unaligned_reads[current_read]){
+                            unaligned_parts_of_reads << ">" << current_read << "_" << part.first << "_" << part.second << endl;
+                            unaligned_parts_of_reads << current_seq.substr(part.first, part.second-part.first) << endl;
+                        }
+                        full_unaligned_parts_of_reads << ">" << current_read << endl;
+                        full_unaligned_parts_of_reads << current_seq << endl;
+                    }
+                }
+                current_read = line.substr(1, line.find_first_of(" \t\n")-1);
+                current_seq = "";
+            }
+            else{
+                current_seq += line;
+            }
+        }
+        if (unaligned_reads.find(current_read) != unaligned_reads.end()){
+            for (auto part : unaligned_reads[current_read]){
+                unaligned_parts_of_reads << ">" << current_read << "_" << part.first << "_" << part.second << endl;
+                unaligned_parts_of_reads << current_seq.substr(part.first, part.second-part.first) << endl;
+            }
+            full_unaligned_parts_of_reads << ">" << current_read << endl;
+            full_unaligned_parts_of_reads << current_seq << endl;
+        }
+        unaligned_parts_of_reads.close();
+        full_unaligned_parts_of_reads.close();
+        read_stream.close();
+    }
+
+    //then reassemble the unaligned parts of the reads using raven
+    string raven_asm = "tmp_raven_asm.fa";
+    string command = path_raven + " " + file_of_unaligned_reads + " -t " + std::to_string(threads) + " > " + raven_asm + " 2> raven.log";
+    int res = system(command.c_str());
+    if (res != 0){
+        cout << RED_TEXT << "ERROR: raven failed to reassemble the unaligned parts of the reads" << RESET_TEXT << endl;
+        exit(1);
+    }
+
+    //read the assembly file (fasta format) and add all the new contigs to the new_assembly_file (gfa format)
+    std::ifstream raven_asm_stream(raven_asm);
+    std::ofstream new_assembly_stream(new_assembly_file);
+
+    string line;
+    string depth = "0";
+    while(std::getline(raven_asm_stream, line)){
+        if (line[0] == '>'){
+            new_assembly_stream << "S\traven_created_" << line.substr(1, line.find_first_of(" \t\n")-1) << "\t";
+            //extract the RC:i: field to get the depth of the contig
+            int start = line.find("RC:i:")+5;
+            int end = line.find_first_of(" \t\n", start);
+            depth = line.substr(start, end-start);
+        }
+        else{
+            new_assembly_stream << line << "\tdp:i:" << depth << endl;
+        }
+    }
+    raven_asm_stream.close();
+    new_assembly_stream.close();
+
+    //append the old assembly with the new assembly
+    system(("cat " + old_assembly + " " + new_assembly_file + " > tmp_assembly.gfa").c_str());
+    system(("mv tmp_assembly.gfa " + new_assembly_file).c_str());
+
+    //map the unaligned reads on the new assembly with minigraph
+    command = path_minigraph + " -c -t " + std::to_string(threads) + " " + new_assembly_file + " " + file_of_full_unaligned_reads + " > " + new_gaf_file + " 2> minigraph.log";
+    res = system(command.c_str());
+    if (res != 0){
+        cout << RED_TEXT << "ERROR: minigraph failed to map the unaligned reads on the new assembly" << RESET_TEXT << endl;
+        exit(1);
+    }
+
+    //concat the old and new gaf file, but delete all the re-mapped reads from the old gaf file
+    std::ifstream old_gaf_stream(gaf_file);
+    string new_new_gaf_file = "tmp_new_new_gaf_file.gaf";
+    std::ofstream new_new_gaf_stream(new_new_gaf_file);
+
+    string old_line;
+    while (std::getline(old_gaf_stream, old_line)){
+        string name_of_read;
+        std::istringstream iss(old_line);
+        iss >> name_of_read;
+        if (unaligned_reads.find(name_of_read) == unaligned_reads.end()){
+            new_new_gaf_stream << old_line << endl;
+        }
+    }
+    old_gaf_stream.close();
+
+    std::ifstream new_gaf_stream(new_gaf_file);
+    string new_line;
+    while (std::getline(new_gaf_stream, new_line)){
+        new_new_gaf_stream << new_line << endl;
+    }
+    new_gaf_stream.close();
+    new_new_gaf_stream.close();
+
+    //mv the new new gaf file to the new gaf file
+    system(("mv " + new_new_gaf_file + " " + new_gaf_file).c_str());
+
+    //remove the temporary files
+    // system(("rm " + raven_asm).c_str());
+    // system("rm raven.cereal");
+    // system(("rm " + file_of_unaligned_reads).c_str());
+    // system(("rm " + file_of_full_unaligned_reads).c_str());
+    // system("rm raven.log");
+    // system("rm minigraph.log");
+    cout << "Reassembled " << unaligned_reads.size() << " reads" << endl;
+    cout << "New assembly and gaf files are " << new_assembly_file << " and " << new_gaf_file << endl;
+    exit(0);
+
+}
+
+/**
  * @brief inventoriate the bridges in a gaf file
+ * @details a bridge is defined by a read that maps first to a contig and then to another contig that is not linked to the first one in the assembly graph
  * 
  * @param gaf_file 
  * @param bridges 
@@ -376,6 +582,7 @@ void transform_bridges_in_links(std::vector<SolidBridge>& solid_bridges, std::st
         link.contig2 = solid_bridge.contig2;
         link.strand1 = solid_bridge.strand1;
         link.strand2 = solid_bridge.strand2;
+        link.coverage = solid_bridge.read_names.size();
 
         //compute the sequence left_of_the_junction + read_chunk + sequence_right_of_the_junction and see if we adjust the coordinates
         //retrieve the sequence of the read in the junction
@@ -817,7 +1024,7 @@ void create_gfa(std::string& input_assembly, std::string& output_assembly, std::
         //if necessary, create a new contig for the link
         if (link.extra_sequence.size() > 0){
             string name_join = "join_"+ contig1 + "_" + std::to_string(position1) + strand1 + "_" + contig2 + "_" + std::to_string(position2) + strand2+"|";
-            output_stream << "S\t" << name_join << "\t" << link.extra_sequence << endl;
+            output_stream << "S\t" << name_join << "\t" << link.extra_sequence << "\tdp:i:" << link.coverage  << endl;
 
             //now create the two L lines
             string L1 = "L\t" + name1 + "\t" + strand1 + "\t" + name_join + "\t+\t0M";
@@ -971,26 +1178,27 @@ void shave_and_pop(std::string input_file, std::string output_file, int max_leng
 int main(int argc, char *argv[])
 {
 
-    string version = "0.1.2";
-    string last_update = "2024-01-25";
-
     //build a clipp.h command line parser
     bool help = false;
     bool print_version = false;
     string input_assembly, input_reads, gaf_file, output_scaffold;
     int num_threads = 1;
+    int min_num_reads_for_link = 5;
     string path_minigraph = "minigraph";
     string path_minimap2 = "minimap2";
     string path_racon = "racon";
+    string path_to_raven = "raven";
     auto cli = clipp::group(
         clipp::required("-i", "--input_assembly").doc("input assembly in gfa format") & clipp::value("input_assembly", input_assembly),
         clipp::required("-r", "--input_reads").doc("input reads in fasta/q format") & clipp::value("input_reads", input_reads),
         clipp::required("-o", "--output_assembly").doc("output assembly in gfa format") & clipp::value("output_assembly", output_scaffold),
+        clipp::option("-b", "--minimum-number-of-reads").doc("minimum number of reads to support a breakpoint [5]") & clipp::value("minimum-number-of-reads", min_num_reads_for_link),
         clipp::option("-t", "--threads").doc("number of threads to use for minigraph [1]") & clipp::value("threads", num_threads),
         clipp::option("-g", "--gaf_file").doc("gaf file (NO SECONDARY ALIGNMENTS). Will be generated with minigraph if not provided") & clipp::value("gaf_file", gaf_file),
         clipp::option("-n", "--minigraph").doc("path to minigraph") & clipp::value("minigraph", path_minigraph),
         clipp::option("-m", "--minimap2").doc("path to minimap2") & clipp::value("minimap2", path_minimap2),
         clipp::option("-r", "--racon").doc("path to racon") & clipp::value("racon", path_racon),
+        clipp::option("--path-to-raven").doc("path to raven") & clipp::value("path-to-raven", path_to_raven),
         clipp::option("-h", "--help").set(help).doc("print this help message and exit"),
         clipp::option("-v", "--version").set(print_version).doc("print version information and exit")
     );
@@ -1033,23 +1241,25 @@ int main(int argc, char *argv[])
 
     //check the dependencies
     cout << "Checking dependencies..." << endl;
-    bool minimap_ok, minigraph_ok, racon_ok;
+    bool minimap_ok, minigraph_ok, racon_ok, raven_ok;
     minimap_ok = (system((path_minimap2 + " -h >trash.tmp 2>trash.tmp").c_str()) == 0);
     minigraph_ok = (system((path_minigraph + " --version >trash.tmp 2>trash.tmp").c_str()) == 0);
     racon_ok = (system((path_racon + " -h >trash.tmp 2>trash.tmp").c_str()) == 0);
+    raven_ok = (path_to_raven != "" && system((path_to_raven + " -h >trash.tmp 2>trash.tmp").c_str()) == 0);
     system("rm trash.tmp");
 
     // Print the table of dependencies
     if (gaf_file == ""){
-        std::cout << "______________________________" << std::endl;
+        std::cout << "_______________________________" << std::endl;
         std::cout << "|    Dependency     |  Found  |" << std::endl;
         std::cout << "|-------------------|---------|" << std::endl;
         std::cout << "|    minigraph      |   " << (minigraph_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
         std::cout << "|    minimap2       |   " << (minimap_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
         std::cout << "|    racon          |   " << (racon_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
+        std::cout << "|    raven          |   " << (raven_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
         std::cout << "-------------------------------" << std::endl;
 
-        if (!minimap_ok || !minigraph_ok || !racon_ok){
+        if (!minimap_ok || !minigraph_ok || !racon_ok || !raven_ok){
             std::cout << "Error: some dependencies are missing. Please install them or provide a valid path with the options." << std::endl;
             return 1;
         }
@@ -1060,9 +1270,10 @@ int main(int argc, char *argv[])
         std::cout << "|-------------------|---------|" << std::endl;
         std::cout << "|    minimap2       |   " << (minimap_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
         std::cout << "|    racon          |   " << (racon_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
+        std::cout << "|    raven          |   " << (raven_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
         std::cout << "-------------------------------" << std::endl;
 
-        if (!minimap_ok || !racon_ok){
+        if (!minimap_ok || !racon_ok || !raven_ok){
             std::cout << "Error: some dependencies are missing. Please install them or provide a valid path with the options." << std::endl;
             return 1;
         }
@@ -1107,32 +1318,39 @@ int main(int argc, char *argv[])
             cout << path_minigraph + " -c --secondary=no -t " + std::to_string(num_threads) + " " + input_assembly + " " + input_reads + " >" + gaf_file + " 2> logminigraph.gt.txt" << endl;
             return 1;
         }
+        // cout << "NOT RUNNING MINIGRPAH, TO BE REMOVED" << endl;
         //delete the log file
         system("rm logminigraph.gt.txt");
-    }
+    }    
+
+    //reassemble unaligned reads with raven
+    cout << "1) Reassembling the unaligned reads with raven..." << endl;
+    string assembly_completed = "tmp_assembly_completed.gfa";
+    string gaf_completed = "tmp_gaf_completed.gaf";
+    reassemble_unaligned_reads(gaf_file, input_reads, input_assembly, assembly_completed, gaf_completed, path_to_raven, path_minigraph, num_threads);
 
     //inventoriate the bridges
-    cout << endl << "1) Going through the gaf file and listing the reads that do not align end-to-end on the assembly graph..." << endl;
+    cout << endl << "2) Going through the gaf file and listing the reads that do not align end-to-end on the assembly graph..." << endl;
     std::vector<Bridge> bridges;
-    inventoriate_bridges(gaf_file, bridges, input_assembly);
+    inventoriate_bridges(gaf_completed, bridges, assembly_completed);
 
     //agregate the bridges
-    cout << "2) Pooling the reads that display similar behaviour on the assembly graph..." << endl;
+    cout << "3) Pooling the reads that display similar behaviour on the assembly graph..." << endl;
     std::vector<SolidBridge> solid_bridges;
-    agregate_bridges(bridges, solid_bridges, 1000, 5);
+    agregate_bridges(bridges, solid_bridges, 1000, min_num_reads_for_link);
 
     //transform the solid bridges into links in the assembly
-    cout << "3) Computing the exact location of new links in the GFA and gap-filling if necessary..." << endl;
+    cout << "4) Computing the exact location of new links in the GFA and gap-filling if necessary..." << endl;
     std::vector<Link> links;
-    transform_bridges_in_links(solid_bridges, input_reads, input_assembly, links, path_minimap2, path_racon);
+    transform_bridges_in_links(solid_bridges, input_reads, assembly_completed, links, path_minimap2, path_racon);
 
     //create a gfa file from the assembly and the links
-    cout << "4) Outputting the new assembly..." << endl;
+    cout << "5) Outputting the new assembly..." << endl;
     string tmp_gfa = "tmp_drt_gfa.gfa";
-    create_gfa(input_assembly, tmp_gfa, links);
+    create_gfa(assembly_completed, tmp_gfa, links);
 
     //shave the graph of small dead ends, that probably result from polishing errors
-    cout << "5) Shaving the graph of small dead ends and popping small bubbles that may have appeared in previous steps..." << endl;
+    cout << "6) Shaving the graph of small dead ends and popping small bubbles that may have appeared in previous steps..." << endl;
     shave_and_pop(tmp_gfa, output_scaffold, 60, 20);
 
     //remove the temporary gfa file

@@ -66,6 +66,8 @@ struct Link{ //a link is a link between two contigs, containing a CIGAR and opti
 
     std::string cigar;
     std::string extra_sequence;
+
+    int coverage;
 };
 
 #endif 

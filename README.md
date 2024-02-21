@@ -17,6 +17,12 @@ cmake ..
 make
 ```
 
+Test the installation on the test instance:
+```
+cd test
+../build/GenomeTailor -i assembly.gfa -r mock_reads.fasta -o test.gfa
+```
+
 ## Usage
 
 ```

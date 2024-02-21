@@ -210,10 +210,10 @@ void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std
     string raven_asm = "tmp_raven_asm.fa";
     string command = path_raven + " " + file_of_unaligned_reads + " -t " + std::to_string(threads) + " > " + raven_asm + " 2> raven.log";
     int res = system(command.c_str());
-    if (res != 0){
-        cout << RED_TEXT << "ERROR: raven failed to reassemble the unaligned parts of the reads" << RESET_TEXT << endl;
-        exit(1);
-    }
+    // if (res != 0){ //if raven fails it means that there was nothing to assemble
+    //     cout << RED_TEXT << "ERROR: raven failed to reassemble the unaligned parts of the reads" << RESET_TEXT << endl;
+    //     exit(1);
+    // }
 
     //read the assembly file (fasta format) and add all the new contigs to the new_assembly_file (gfa format)
     std::ifstream raven_asm_stream(raven_asm);
@@ -282,9 +282,9 @@ void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std
     // system(("rm " + file_of_full_unaligned_reads).c_str());
     // system("rm raven.log");
     // system("rm minigraph.log");
-    cout << "Reassembled " << unaligned_reads.size() << " reads" << endl;
-    cout << "New assembly and gaf files are " << new_assembly_file << " and " << new_gaf_file << endl;
-    exit(0);
+    // cout << "Reassembled " << unaligned_reads.size() << " reads" << endl;
+    // cout << "New assembly and gaf files are " << new_assembly_file << " and " << new_gaf_file << endl;
+    // exit(0);
 
 }
 

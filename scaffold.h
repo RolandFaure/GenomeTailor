@@ -42,6 +42,15 @@ struct Bridge{ //a bridge is a bridge between two contigs defined by a read
     int pos_read_on_contig2;
 };
 
+struct Pier{ //a pier is a read going into the unknown
+    std::string contig;
+    int position;
+    bool strand; //true if pier toward the right of contig, false if pier toward the left
+
+    std::string read_name;
+    int pos_read_on_contig;
+};
+
 struct SolidBridge{ //a bridge is a bridge between two contigs defined by several read, e.g. by agregating Bridge
     std::string contig1;
     std::string contig2;
@@ -53,6 +62,16 @@ struct SolidBridge{ //a bridge is a bridge between two contigs defined by severa
     std::vector<std::string> read_names;
     std::vector<int> pos_read_on_contig1;
     std::vector<int> pos_read_on_contig2;
+    std::vector<bool> strand;
+};
+
+struct SolidPier{
+    std::string contig;
+    int position;
+    bool strand; //true if pier toward the right of contig, false if pier toward the left
+
+    std::vector<std::string> read_names;
+    std::vector<int> pos_read_on_contig;
     std::vector<bool> strand;
 };
 

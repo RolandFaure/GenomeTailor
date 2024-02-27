@@ -211,12 +211,10 @@ void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std
     string command = path_raven + " " + file_of_unaligned_reads + " -t " + std::to_string(threads) + " > " + raven_asm + " 2> raven.log";
     int res = system(command.c_str());
     if (res != 0){
-        cout << RED_TEXT << "ERROR: raven failed to reassemble the unaligned parts of the reads" << RESET_TEXT << endl;
-        cout << "Command was: " << command << endl;
-        exit(1);
+        // cout << RED_TEXT << "ERROR: raven failed to reassemble the unaligned parts of the reads" << RESET_TEXT << endl;
+        // cout << "Command was: " << command << endl;
+        // exit(1);
     }
-    cout << "raven command line: " << command << endl;
-
     //read the assembly file (fasta format) and add all the new contigs to the new_assembly_file (gfa format)
     std::ifstream raven_asm_stream(raven_asm);
     std::ofstream new_assembly_stream(new_assembly_file);
@@ -294,7 +292,7 @@ void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std
  * @param gaf_file 
  * @param bridges 
  */
-void inventoriate_bridges(std::string gaf_file, std::vector<Bridge>& bridges, std::string& assembly_file){
+void inventoriate_bridges_and_piers(std::string gaf_file, std::vector<Bridge>& bridges, std::vector<Pier>& piers, std::string& assembly_file){
     
     std::unordered_map<std::string, long int> length_of_contigs;
     std::ifstream assembly_stream(assembly_file);
@@ -376,9 +374,11 @@ void inventoriate_bridges(std::string gaf_file, std::vector<Bridge>& bridges, st
                 mapping.orientation_on_contig2 = false;
             }
 
+            mapping.breakpoint1 = false;
             if (start_of_mapping > min_length_for_breakpoint){
                 mapping.breakpoint1 = true;
             }
+            mapping.breakpoint2 = false;
             if (length_of_read-end_of_mapping > min_length_for_breakpoint){
                 mapping.breakpoint2 = true;
             }
@@ -395,6 +395,19 @@ void inventoriate_bridges(std::string gaf_file, std::vector<Bridge>& bridges, st
 
         //see if there are links between the breakpoints
         for (int b = 0; b < mapping.second.size(); b++){
+
+            //see if there is a pier left of the first breakpoint
+            if (b == 0 && mapping.second[b].breakpoint1 == true){
+                Pier pier;
+                pier.contig = mapping.second[b].contig1;
+                pier.position = mapping.second[b].position_on_contig1;
+                pier.strand = mapping.second[b].orientation_on_contig1;
+                pier.read_name = mapping.first;
+                pier.pos_read_on_contig = mapping.second[b].pos_on_read1;
+                pier.strand_read = false;
+                piers.push_back(pier);
+            }
+
             if (b < mapping.second.size()-1 && mapping.second[b].breakpoint2 == true && mapping.second[b+1].breakpoint1 == true ){ //then the two breakpoints are linked !!
 
                 //if there is only a small overlap between the two mappings, adjust the overlap to remove it
@@ -441,6 +454,18 @@ void inventoriate_bridges(std::string gaf_file, std::vector<Bridge>& bridges, st
                     bridges.push_back(bridge);
                 }
             }
+
+            //see if there is a pier right of the last breakpoint
+            if (b == mapping.second.size()-1 && mapping.second[b].breakpoint2 == true){
+                Pier pier;
+                pier.contig = mapping.second[b].contig2;
+                pier.position = mapping.second[b].position_on_contig2;
+                pier.strand = mapping.second[b].orientation_on_contig2;
+                pier.read_name = mapping.first;
+                pier.pos_read_on_contig = mapping.second[b].pos_on_read2;
+                pier.strand_read = true;
+                piers.push_back(pier);
+            }
         }
     }
 }
@@ -453,7 +478,7 @@ void inventoriate_bridges(std::string gaf_file, std::vector<Bridge>& bridges, st
  * @param aggregative_distance distance in base pairs to agregate bridges
  * @param min_number_of_reads 
  */
-void agregate_bridges(std::vector<Bridge>& bridges, std::vector<SolidBridge>& solid_bridges, int aggregative_distance, int min_number_of_reads){
+void agregate_bridges_and_piers(std::vector<Bridge>& bridges, std::vector<Pier>& piers, std::vector<SolidBridge>& solid_bridges, std::vector<SolidPier>& solid_piers, int aggregative_distance, int min_number_of_reads){
     //agregate bridges into solid bridges
     for (Bridge& bridge : bridges){
 
@@ -529,10 +554,55 @@ void agregate_bridges(std::vector<Bridge>& bridges, std::vector<SolidBridge>& so
         }
     }
     solid_bridges = solid_bridges_kept;
+
+    //agregate piers into solid piers
+    for (Pier& pier : piers){
+        bool found = false;
+        for (auto& solid_pier : solid_piers){
+            if (solid_pier.contig == pier.contig && abs(solid_pier.position - pier.position) <= aggregative_distance){
+                solid_pier.read_names.push_back(pier.read_name);
+                solid_pier.pos_read_on_contig.push_back(pier.pos_read_on_contig);
+                solid_pier.strands_read.push_back(pier.strand_read);
+                found = true;
+                break;
+            }
+        }
+        if (!found){
+            SolidPier solid_pier;
+            solid_pier.contig = pier.contig;
+            solid_pier.position = pier.position;
+            solid_pier.strand = pier.strand;
+            solid_pier.read_names.push_back(pier.read_name);
+            solid_pier.pos_read_on_contig.push_back(pier.pos_read_on_contig);
+            solid_pier.strands_read.push_back(pier.strand_read);
+            solid_piers.push_back(solid_pier);
+        }
+    }
+
+    //now keep only the solid piers that have at least min_number_of_reads reads AND that are not just one end of a bridge but not long enough to be a bridge
+    std::vector<SolidPier> solid_piers_kept;
+    for (auto solid_pier : solid_piers){
+        if (solid_pier.read_names.size() >= min_number_of_reads){
+            bool is_pier = true;
+            for (auto solid_bridge : solid_bridges){
+                if (solid_bridge.contig1 == solid_pier.contig || solid_bridge.contig2 == solid_pier.contig){
+                    if ((abs(solid_bridge.position1 - solid_pier.position) <= aggregative_distance  && solid_bridge.strand1 == solid_pier.strand)
+                        || (abs(solid_bridge.position2 - solid_pier.position) <= aggregative_distance && solid_bridge.strand2 == solid_pier.strand)){
+                        is_pier = false; //the pier is just one end of a bridge
+                        break;
+                    }
+                }
+            }
+            if (is_pier){
+                solid_piers_kept.push_back(solid_pier);
+            }
+        }
+    }
+    solid_piers = solid_piers_kept;
 }
 
 /**
- * @brief transform solid bridges into links
+ * @brief transform solid bridges into links, ie with precise coordinates and if needed gap filling
  * 
  * @param solid_bridges 
  * @param read_file 
@@ -789,6 +859,155 @@ void transform_bridges_in_links(std::vector<SolidBridge>& solid_bridges, std::st
 
 }
 
+void build_piers(std::vector<SolidPier>& solid_piers, std::string read_file, std::string assembly_file, std::vector<End_contig>& end_contigs,
+    std::string& path_minimap2, std::string& path_racon){
+    
+    //index the positions of the reads in the read file
+    robin_hood::unordered_map<std::string, long int> read_positions;
+    std::ifstream read_stream(read_file);
+    string line;
+    long int position = 0;
+    auto pos = read_stream.tellg();
+    while (std::getline(read_stream, line)){
+        pos = read_stream.tellg();
+        if (line[0] == '>' || line[0] == '@'){
+            std::istringstream iss(line);
+            std::string token;
+            iss >> token;
+            read_positions[token.substr(1)] = pos;
+        }
+    }
+    read_stream.close();
+
+    //index the positions of the contigs in the assembly file
+    robin_hood::unordered_map<std::string, long int> contig_positions;
+    std::ifstream assembly_stream(assembly_file);
+    pos = assembly_stream.tellg();
+    while (std::getline(assembly_stream, line)){
+        if (line[0] == 'S'){
+            std::istringstream iss(line);
+            std::string token;
+            iss >> token;
+            iss >> token;
+            contig_positions[token] = pos;
+        }
+        pos = assembly_stream.tellg();
+    }
+
+    //now create extra sequences for the piers and link them
+    for (auto solid_pier : solid_piers){
+
+        //retrieve the sequence of the contig on the left of the junction
+        std::ifstream assembly_stream(assembly_file);
+        std::string contig1_sequence, contig2_sequence;
+
+        assembly_stream.seekg(contig_positions[solid_pier.contig]);
+        std::getline(assembly_stream, line);
+        string seq_1, seq_2, nothing;
+        std::istringstream iss(line);
+        iss >> nothing >> nothing >> seq_1;
+        if (solid_pier.strand == true){
+            int overhang_1 = min(solid_pier.position , 200);
+            contig1_sequence = seq_1.substr(solid_pier.position-overhang_1, overhang_1);
+        }
+        else{
+            int overhang_1 = min(200, (int) seq_1.size()-solid_pier.position);
+            contig1_sequence = reverse_complement(seq_1.substr(solid_pier.position, overhang_1));
+        }
+
+        //retrieve the longest sequence of the reads that make the pier
+        int longest_length = 0;
+        string seq_to_polish;
+        vector<string> reads;
+        bool strand_of_longest_seq;
+        for (auto read_num = 0 ; read_num < solid_pier.read_names.size() ; read_num++){
+            string read_name = solid_pier.read_names[read_num];
+            std::ifstream read_stream(read_file);
+            read_stream.seekg(read_positions[read_name]);
+            std::getline(read_stream, line);
+            if (solid_pier.strands_read[read_num] && line.size()-solid_pier.pos_read_on_contig[read_num] > longest_length){
+                longest_length = line.size()-solid_pier.pos_read_on_contig[read_num];
+                seq_to_polish = line.substr(solid_pier.pos_read_on_contig[read_num], line.size()-solid_pier.pos_read_on_contig[read_num]);
+                strand_of_longest_seq = solid_pier.strands_read[read_num];
+            }
+            else if (solid_pier.strands_read[read_num] == false && solid_pier.pos_read_on_contig[read_num] > longest_length){
+                longest_length = solid_pier.pos_read_on_contig[read_num];
+                seq_to_polish = reverse_complement(line.substr(0, solid_pier.pos_read_on_contig[read_num]));
+                strand_of_longest_seq = solid_pier.strands_read[read_num];
+            }
+            reads.push_back(line);
+            read_stream.close();
+        }
+
+        //polish the sequence
+        string polished_seq = polish(seq_to_polish, reads, path_minimap2, path_racon);
+
+        //now align the polished sequence to the contig to see where the junction is exactly
+        string contig1_sequence2; //sequences on the other side of the junction compared to before, i.e. towards the inside of the junction
+        if (solid_pier.strand == true){
+            int overhang_1 = min(seq_1.size() - solid_pier.position , polished_seq.size());
+            contig1_sequence2 = seq_1.substr(solid_pier.position, overhang_1);
+        }
+        else{
+            int overhang_1 = min( (int) polished_seq.size(), solid_pier.position);
+            contig1_sequence2 = reverse_complement(seq_1.substr(solid_pier.position-overhang_1, overhang_1));
+        }
+        string cigar = align(contig1_sequence2, 0, contig1_sequence2.size(), polished_seq, 0, polished_seq.size());
+
+        int end_of_match_polished_seq = 0;
+        int end_of_match_contig1 = 0;
+        int pos_c1 = 0;
+        int pos_ps = 0;
+        int consecutive_matches = 5;
+        int num_indel = 0;
+        int num_matches = 0;
+
+        for (auto c = 0 ; c < cigar.size() ; c++){
+            if (cigar[c] == '='){
+                consecutive_matches++;
+                pos_c1++;
+                pos_ps++;
+                num_matches++;
+            }
+            else{
+                consecutive_matches = 0;
+                if (cigar[c] == 'I'){
+                    pos_ps++;
+                }
+                else if (cigar[c] == 'D'){
+                    pos_c1++;
+                }
+                else if (cigar[c] == 'X'){
+                    pos_c1++;
+                    pos_ps++;
+                }
+                num_indel++;
+            }
+            if (consecutive_matches >= 5 && num_indel <= 0.2*num_matches){
+                end_of_match_polished_seq = pos_ps;
+                end_of_match_contig1 = pos_c1;
+            }
+        }
+
+        //slide the polished sequence and the contig to the right by end_of_match_polished_seq and end_of_match_contig1
+        End_contig end_contig;
+        end_contig.contig = solid_pier.contig;
+        if (solid_pier.strand == true){
+            end_contig.position = solid_pier.position + end_of_match_contig1;
+        }
+        else{
+            end_contig.position = solid_pier.position - end_of_match_contig1;
+        }
+        end_contig.extra_sequence = polished_seq.substr(end_of_match_polished_seq, polished_seq.size()-end_of_match_polished_seq);
+        end_contig.strand = solid_pier.strand;
+        end_contig.strand_read = strand_of_longest_seq;
+        
+        end_contigs.push_back(end_contig);
+
+    }
+
+}
+
 /**
  * @brief create a gfa file from the assembly and the links
  * 
@@ -796,7 +1015,7 @@ void transform_bridges_in_links(std::vector<SolidBridge>& solid_bridges, std::st
  * @param output_assembly 
  * @param links 
  */
-void create_gfa(std::string& input_assembly, std::string& output_assembly, std::vector<Link>& links){
+void create_gfa(std::string& input_assembly, std::string& output_assembly, std::vector<Link>& links, std::vector<End_contig>& end_contigs){
     
     unordered_map<string, vector<int>> breakpoints_in_contigs;
     unordered_map<string, int> length_of_contigs;
@@ -859,6 +1078,31 @@ void create_gfa(std::string& input_assembly, std::string& output_assembly, std::
                 }
                 else if (breakpoints_in_contigs[contig2][bp] > position2){
                     breakpoints_in_contigs[contig2].insert(breakpoints_in_contigs[contig2].begin()+bp, position2);
+                }
+            }
+        }
+    }
+
+    //go through the end contigs and inventoriate the breakpoints
+    for (auto end_contig : end_contigs){
+        string contig = end_contig.contig;
+        int position = end_contig.position;
+
+        //insert the breakpoint in the contig
+        if (position > 0 && position < length_of_contigs[contig]){
+            if (breakpoints_in_contigs.find(contig) == breakpoints_in_contigs.end()){
+                breakpoints_in_contigs[contig] = {position};
+            }
+            else{ //insert the breakpoint at the right position
+                int bp = 0;
+                while (bp < breakpoints_in_contigs[contig].size() && breakpoints_in_contigs[contig][bp] < position){
+                    bp++;
+                }
+                if (bp == breakpoints_in_contigs[contig].size()){
+                    breakpoints_in_contigs[contig].push_back(position);
+                }
+                else if (breakpoints_in_contigs[contig][bp] > position){
+                    breakpoints_in_contigs[contig].insert(breakpoints_in_contigs[contig].begin()+bp, position);
                 }
             }
         }
@@ -1035,6 +1279,52 @@ void create_gfa(std::string& input_assembly, std::string& output_assembly, std::
             string L1 = "L\t" + name1 + "\t" + strand1 + "\t" + name2 + "\t" + strand2 + "\t0M";
             L_lines.push_back(L1);
         }
+    }
+
+    //now go through the end contigs
+    for (auto end_contig: end_contigs){
+        string contig = end_contig.contig;
+        int position = end_contig.position;
+        char strand = "-+"[end_contig.strand];
+
+        string name;
+        int pos_before = 0;
+        int pos_after = length_of_contigs[contig];
+        for (int b = 0 ; b < breakpoints_in_contigs[contig].size() ; b++){
+            if (breakpoints_in_contigs[contig][b] == position){
+                if (b < breakpoints_in_contigs[contig].size()-1){
+                    pos_after = breakpoints_in_contigs[contig][b+1];
+                }
+                if (b > 0){
+                    pos_before = breakpoints_in_contigs[contig][b-1];
+                }
+                break;
+            }
+        }
+        if (position == 0 && breakpoints_in_contigs[contig].size() > 0){
+            pos_after = breakpoints_in_contigs[contig][0];
+        }
+        if (position == length_of_contigs[contig] && breakpoints_in_contigs[contig].size() > 0){
+            pos_before = breakpoints_in_contigs[contig][breakpoints_in_contigs[contig].size()-1];
+        }
+        if (strand == '-'){
+            name = contig + "_" + std::to_string(position) + "_" + std::to_string(pos_after);
+        }
+        else{
+            name = contig + "_" + std::to_string(pos_before) + "_" + std::to_string(position);
+        }
+
+        //create the extra contig
+        cout << "creating extra contig " << "extend_"+ contig + "_" + std::to_string(position) + strand + "|" << endl;
+        string name_pier = "extend_"+ contig + "_" + std::to_string(position) + strand + "|";
+        output_stream << "S\t" << name_pier << "\t" << end_contig.extra_sequence << "\tdp:i:" << end_contig.coverage  << endl;
+
+        //now create the L line from the contig to the extra contig
+        char orientationContig = "-+"[end_contig.strand];
+        char orientationPier = "-+"[end_contig.strand_read];
+
+        string L1 = "L\t" + name + "\t" + orientationContig + "\t" + name_pier + "\t" + orientationPier + "\t0M";
+        L_lines.push_back(L1);
     }
 
     //print all the L lines
@@ -1292,6 +1582,7 @@ int main(int argc, char *argv[])
     bool gaf_file_is_gaf = (gaf_file.substr(gaf_file.find_last_of(".") + 1) == "gaf");
 
     cout << "Checking file formats..." << endl;
+    {
     //print a table of the input and output files
     std::cout << "_________________________________" << std::endl;
     std::cout << "|       File        | Format ok |" << std::endl;
@@ -1313,6 +1604,7 @@ int main(int argc, char *argv[])
         std::cout << "|  gaf_file         |  " << (gaf_file_is_gaf ? GREEN_TEXT "  gaf  " : RED_TEXT "not gaf") << RESET_TEXT "  |" << std::endl;
     }
     std::cout << "---------------------------------" << std::endl << std::endl;
+    }
 
     if (!input_assembly_is_gfa || (!input_reads_is_fasta && !input_reads_is_fastq) || !output_scaffold_is_gfa || (gaf_file != "" && !gaf_file_is_gaf)){
         std::cout << "Error: some input or output files are not in the right format. Please check the format and try again." << std::endl;
@@ -1347,22 +1639,26 @@ int main(int argc, char *argv[])
     //inventoriate the bridges
     cout << endl << "2) Going through the gaf file and listing the reads that do not align end-to-end on the assembly graph..." << endl;
     std::vector<Bridge> bridges;
-    inventoriate_bridges(gaf_completed, bridges, assembly_completed);
+    std::vector<Pier> piers;
+    inventoriate_bridges_and_piers(gaf_completed, bridges, piers, assembly_completed);
 
     //agregate the bridges
     cout << "3) Pooling the reads that display similar behaviour on the assembly graph..." << endl;
     std::vector<SolidBridge> solid_bridges;
-    agregate_bridges(bridges, solid_bridges, 1000, min_num_reads_for_link);
+    std::vector<SolidPier> solid_piers;
+    agregate_bridges_and_piers(bridges, piers, solid_bridges, solid_piers, 1000, min_num_reads_for_link);
 
     //transform the solid bridges into links in the assembly
     cout << "4) Computing the exact location of new links in the GFA and gap-filling if necessary..." << endl;
     std::vector<Link> links;
+    std::vector<End_contig> end_contigs;
     transform_bridges_in_links(solid_bridges, input_reads, assembly_completed, links, path_minimap2, path_racon);
+    build_piers(solid_piers, input_reads, assembly_completed, end_contigs, path_minimap2, path_racon);
 
     //create a gfa file from the assembly and the links
     cout << "5) Outputting the new assembly..." << endl;
     string tmp_gfa = "tmp_drt_gfa.gfa";
-    create_gfa(assembly_completed, tmp_gfa, links);
+    create_gfa(assembly_completed, tmp_gfa, links, end_contigs);
 
     //shave the graph of small dead ends, that probably result from polishing errors
     cout << "6) Shaving the graph of small dead ends and popping small bubbles that may have appeared in previous steps..." << endl;

@@ -33,8 +33,8 @@ using std::max;
 #define GREEN_TEXT "\033[1;32m"
 #define RESET_TEXT "\033[0m"
 
-string version = "0.1.4";
-string last_update = "2024-02-16";
+string version = "0.2.0";
+string last_update = "2024-03-01";
 
 vector<string> split(string& s, string& delimiter){
     vector<string> res;
@@ -88,6 +88,86 @@ string reverse_complement(string seq){
 }
 
 /**
+ * @brief From the gaf file, check which reads are aligned end to end, which are partially aligned and which are not aligned at all
+ * 
+ * @param gaf_file 
+ * @param read_file 
+ * @param number_of_well_aligned_reads 
+ * @param number_of_partially_aligned_reads 
+ * @param number_of_unaligned_reads 
+ */
+void check_which_reads_are_well_aligned(std::string gaf_file, std::string read_file, int &number_of_well_aligned_reads, int& number_of_partially_aligned_reads, int& number_of_unaligned_reads){
+    std::ifstream gaf_stream(gaf_file);
+    int too_long = 1000; //minimum length of unaligned part to consider it worth reassembling
+
+    //first inventoriate the unaligned parts of the reads
+    string line;
+    string current_read;
+    int current_length;
+    unordered_map<string, bool> full_alignment_detected;
+    unordered_map<string, int> length_of_reads;
+    unordered_map<string, int> length_of_alignments_of_reads;
+    while (std::getline(gaf_stream, line)){
+        string name_of_read;
+        int length_of_read;
+        int start_of_mapping;
+        int end_of_mapping;
+        string strand;
+        string path;
+        int path_length;
+        int path_start;
+        int path_end;
+        string nothing;
+        int quality;
+
+        std::istringstream iss(line);
+        iss >> name_of_read >> length_of_read >> start_of_mapping >> end_of_mapping >> strand >> path >> path_length >> path_start >> path_end >> nothing >> nothing >> quality;
+
+        //check if the read aligns end to end
+        if (quality > 0 && start_of_mapping <= min((double)too_long, 0.2*length_of_read) && end_of_mapping >= max(0.8*length_of_read, (double)length_of_read-too_long)){
+            full_alignment_detected[name_of_read] = true;
+            length_of_reads[name_of_read] = length_of_read;
+            length_of_alignments_of_reads[name_of_read] = end_of_mapping-start_of_mapping;
+        }
+        else if (quality > 0){
+            if (length_of_alignments_of_reads.find(name_of_read) == length_of_alignments_of_reads.end()){
+                length_of_alignments_of_reads[name_of_read] = end_of_mapping-start_of_mapping;
+                length_of_reads[name_of_read] = length_of_read;
+            }
+            else{
+                length_of_alignments_of_reads[name_of_read] += end_of_mapping-start_of_mapping;
+            }
+        }
+
+    }
+    gaf_stream.close();
+
+    //now go through the reads and count
+    std::ifstream read_stream(read_file);
+    string read_name;
+    while (std::getline(read_stream, line)){
+        if (line[0] == '>' || line[0] == '@'){
+            read_name = line.substr(1, line.find_first_of(" \t\n")-1);
+            if (length_of_reads.find(read_name) != length_of_reads.end()){
+                if (full_alignment_detected[read_name]){
+                    number_of_well_aligned_reads++;
+                }
+                else if (length_of_alignments_of_reads[read_name] > 0.8*length_of_reads[read_name]){ //aligned but on multiple contigs
+                    number_of_partially_aligned_reads++;
+                }
+                else{
+                    number_of_unaligned_reads++;
+                    // cout << "read " << read_name << " is not aligned at all" << endl;
+                }
+            }
+            else{
+                number_of_unaligned_reads++;
+            }
+        }
+    }
+}
+
+/**
  * @brief Module to inventoriate all the reads that do not map well on the assembly and re-assemble them using raven
  * 
  * @param gaf_file 
@@ -108,103 +188,97 @@ void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std
     unordered_map<string,vector<pair<int,int>>> unaligned_reads; //name of the read and the start and end of the unaligned part
 
     //first inventoriate the unaligned parts of the reads
-    {
-        string line;
-        string current_read;
-        int current_length;
-        vector<pair<int,int>> aligned_part_of_this_read;
-        while (std::getline(gaf_stream, line)){
-            string name_of_read;
-            int length_of_read;
-            int start_of_mapping;
-            int end_of_mapping;
-            string strand;
-            string path;
-            int path_length;
-            int path_start;
-            int path_end;
-            string nothing;
-            int quality;
+    string line;
+    string current_read;
+    int current_length;
+    vector<pair<int,int>> aligned_part_of_this_read;
+    while (std::getline(gaf_stream, line)){
+        string name_of_read;
+        int length_of_read;
+        int start_of_mapping;
+        int end_of_mapping;
+        string strand;
+        string path;
+        int path_length;
+        int path_start;
+        int path_end;
+        string nothing;
+        int quality;
 
-            std::istringstream iss(line);
-            iss >> name_of_read >> length_of_read >> start_of_mapping >> end_of_mapping >> strand >> path >> path_length >> path_start >> path_end >> nothing >> nothing >> quality;
+        std::istringstream iss(line);
+        iss >> name_of_read >> length_of_read >> start_of_mapping >> end_of_mapping >> strand >> path >> path_length >> path_start >> path_end >> nothing >> nothing >> quality;
 
-            if (name_of_read != current_read){
-                if (aligned_part_of_this_read.size() > 0){
-                    //sort the aligned parts of the read by start position
-                    std::sort(aligned_part_of_this_read.begin(), aligned_part_of_this_read.end(), [](pair<int,int>& a, pair<int,int>& b){return a.first < b.first;});
-                    //then go through the aligned parts and see if there are unaligned parts
-                    int start_of_unaligned = 0;
-                    for (auto part : aligned_part_of_this_read){
-                        if (part.first-start_of_unaligned > too_long){
-                            if (unaligned_reads.find(current_read) == unaligned_reads.end()){
-                                unaligned_reads[current_read] = {};
-                            }
-                            unaligned_reads[current_read].push_back({start_of_unaligned, part.first});
-                        }
-                        start_of_unaligned = part.second;
-                    }
-                    if (current_length-start_of_unaligned > too_long){
+        if (name_of_read != current_read){
+            if (aligned_part_of_this_read.size() > 0){
+                //sort the aligned parts of the read by start position
+                std::sort(aligned_part_of_this_read.begin(), aligned_part_of_this_read.end(), [](pair<int,int>& a, pair<int,int>& b){return a.first < b.first;});
+                //then go through the aligned parts and see if there are unaligned parts
+                int start_of_unaligned = 0;
+                for (auto part : aligned_part_of_this_read){
+                    if (part.first-start_of_unaligned > too_long){
                         if (unaligned_reads.find(current_read) == unaligned_reads.end()){
                             unaligned_reads[current_read] = {};
                         }
-                        unaligned_reads[current_read].push_back({start_of_unaligned, current_length});
+                        unaligned_reads[current_read].push_back({start_of_unaligned, part.first});
                     }
+                    start_of_unaligned = part.second;
                 }
-                current_length = length_of_read;
-                current_read = name_of_read;
-                aligned_part_of_this_read.clear();
+                if (current_length-start_of_unaligned > too_long){
+                    if (unaligned_reads.find(current_read) == unaligned_reads.end()){
+                        unaligned_reads[current_read] = {};
+                    }
+                    unaligned_reads[current_read].push_back({start_of_unaligned, current_length});
+                }
+            }
+            current_length = length_of_read;
+            current_read = name_of_read;
+            aligned_part_of_this_read.clear();
+            aligned_part_of_this_read.push_back({start_of_mapping, end_of_mapping});
+        }
+        else{
+            if (quality == 60 && end_of_mapping-start_of_mapping > too_long){
                 aligned_part_of_this_read.push_back({start_of_mapping, end_of_mapping});
             }
-            else{
-                if (quality == 60 && end_of_mapping-start_of_mapping > too_long){
-                    aligned_part_of_this_read.push_back({start_of_mapping, end_of_mapping});
-                }
-            }
         }
-        gaf_stream.close();
     }
+    gaf_stream.close();
 
     //now output the unaligned parts of the reads in a file
-    {
-        std::ifstream read_stream(read_file);
-        std::ofstream unaligned_parts_of_reads(file_of_unaligned_reads);
-        std::ofstream full_unaligned_parts_of_reads(file_of_full_unaligned_reads);
-        string line;
-        string current_read;
-        string current_seq;
-        
-        while (std::getline(read_stream, line)){
-            if (line[0] == '>' || line[0] == '@'){
-                if (current_read != ""){
-                    if (unaligned_reads.find(current_read) != unaligned_reads.end()){
-                        for (auto part : unaligned_reads[current_read]){
-                            unaligned_parts_of_reads << ">" << current_read << "_" << part.first << "_" << part.second << endl;
-                            unaligned_parts_of_reads << current_seq.substr(part.first, part.second-part.first) << endl;
-                        }
-                        full_unaligned_parts_of_reads << ">" << current_read << endl;
-                        full_unaligned_parts_of_reads << current_seq << endl;
+    std::ifstream read_stream(read_file);
+    std::ofstream unaligned_parts_of_reads(file_of_unaligned_reads);
+    std::ofstream full_unaligned_parts_of_reads(file_of_full_unaligned_reads);
+    string current_seq;
+    
+    while (std::getline(read_stream, line)){
+        if (line[0] == '>' || line[0] == '@'){
+            if (current_read != ""){
+                if (unaligned_reads.find(current_read) != unaligned_reads.end()){
+                    for (auto part : unaligned_reads[current_read]){
+                        unaligned_parts_of_reads << ">" << current_read << "_" << part.first << "_" << part.second << endl;
+                        unaligned_parts_of_reads << current_seq.substr(part.first, part.second-part.first) << endl;
                     }
+                    full_unaligned_parts_of_reads << ">" << current_read << endl;
+                    full_unaligned_parts_of_reads << current_seq << endl;
                 }
-                current_read = line.substr(1, line.find_first_of(" \t\n")-1);
-                current_seq = "";
             }
-            else{
-                current_seq += line;
-            }
+            current_read = line.substr(1, line.find_first_of(" \t\n")-1);
+            current_seq = "";
         }
-        if (unaligned_reads.find(current_read) != unaligned_reads.end()){
-            for (auto part : unaligned_reads[current_read]){
-                unaligned_parts_of_reads << ">" << current_read << "_" << part.first << "_" << part.second << endl;
-                unaligned_parts_of_reads << current_seq.substr(part.first, part.second-part.first) << endl;
-            }
-            full_unaligned_parts_of_reads << ">" << current_read << endl;
-            full_unaligned_parts_of_reads << current_seq << endl;
+        else{
+            current_seq += line;
         }
-        unaligned_parts_of_reads.close();
-        full_unaligned_parts_of_reads.close();
-        read_stream.close();
     }
+    if (unaligned_reads.find(current_read) != unaligned_reads.end()){
+        for (auto part : unaligned_reads[current_read]){
+            unaligned_parts_of_reads << ">" << current_read << "_" << part.first << "_" << part.second << endl;
+            unaligned_parts_of_reads << current_seq.substr(part.first, part.second-part.first) << endl;
+        }
+        full_unaligned_parts_of_reads << ">" << current_read << endl;
+        full_unaligned_parts_of_reads << current_seq << endl;
+    }
+    unaligned_parts_of_reads.close();
+    full_unaligned_parts_of_reads.close();
+    read_stream.close();
 
     //then reassemble the unaligned parts of the reads using raven
     string raven_asm = "tmp_raven_asm.fa";
@@ -219,7 +293,6 @@ void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std
     std::ifstream raven_asm_stream(raven_asm);
     std::ofstream new_assembly_stream(new_assembly_file);
 
-    string line;
     string depth = "0";
     while(std::getline(raven_asm_stream, line)){
         if (line[0] == '>'){
@@ -336,7 +409,7 @@ void inventoriate_bridges_and_piers(std::string gaf_file, std::vector<Bridge>& b
             exit(1);
         }
 
-        int min_length_for_breakpoint = min(0.2*length_of_read, 100.0); //minimum length of overhang to consider a breakpoint
+        int min_length_for_breakpoint = min(0.2*length_of_read, 500.0); //minimum length of overhang to consider a breakpoint
         if ((start_of_mapping > min_length_for_breakpoint || length_of_read-end_of_mapping > min_length_for_breakpoint) && quality == 60) //read is not mapped end to end !
         {        
             vector<string> all_contigs = split(path, delimiter);
@@ -509,6 +582,7 @@ void agregate_bridges_and_piers(std::vector<Bridge>& bridges, std::vector<Pier>&
             }
             else if (solid_bridge.contig1 == bridge.contig2 && solid_bridge.contig2 == bridge.contig1 
                 && abs(solid_bridge.position1 - bridge.position2) <= aggregative_distance && abs(solid_bridge.position2 - bridge.position1) <= aggregative_distance
+                && abs(abs(solid_bridge.pos_read_on_contig1[0]-solid_bridge.pos_read_on_contig2[0]) - abs(bridge.pos_read_on_contig1-bridge.pos_read_on_contig2) ) <= aggregative_distance
                 && solid_bridge.strand1 == bridge.strand2 && solid_bridge.strand2 == bridge.strand1){ // the two reads are on opposite strands
 
                 if (bridge.pos_read_on_contig2-bridge.pos_read_on_contig1 < solid_bridge.pos_read_on_contig2[0]-solid_bridge.pos_read_on_contig1[0]){
@@ -859,6 +933,16 @@ void transform_bridges_in_links(std::vector<SolidBridge>& solid_bridges, std::st
 
 }
 
+/**
+ * @brief 
+ * 
+ * @param solid_piers 
+ * @param read_file 
+ * @param assembly_file 
+ * @param end_contigs 
+ * @param path_minimap2 
+ * @param path_racon 
+ */
 void build_piers(std::vector<SolidPier>& solid_piers, std::string read_file, std::string assembly_file, std::vector<End_contig>& end_contigs,
     std::string& path_minimap2, std::string& path_racon){
     
@@ -1007,6 +1091,7 @@ void build_piers(std::vector<SolidPier>& solid_piers, std::string read_file, std
     }
 
 }
+
 
 /**
  * @brief create a gfa file from the assembly and the links
@@ -1315,7 +1400,6 @@ void create_gfa(std::string& input_assembly, std::string& output_assembly, std::
         }
 
         //create the extra contig
-        cout << "creating extra contig " << "extend_"+ contig + "_" + std::to_string(position) + strand + "|" << endl;
         string name_pier = "extend_"+ contig + "_" + std::to_string(position) + strand + "|";
         output_stream << "S\t" << name_pier << "\t" << end_contig.extra_sequence << "\tdp:i:" << end_contig.coverage  << endl;
 
@@ -1464,8 +1548,255 @@ void shave_and_pop(std::string input_file, std::string output_file, int max_leng
     }
 }
 
+/**
+ * @brief 
+ * 
+ * @param input_assembly 
+ * @param input_reads 
+ * @param gaf_file 
+ * @param path_minigraph 
+ * @param num_threads 
+ */
+void realign_reads_on_assembly(vector<SolidBridge>& solid_bridges, vector<SolidPier>& solid_piers, std::string& input_assembly, std::string& input_reads, std::string& gaf_file, std::string& path_minigraph, int num_threads){
+    
+    //index the positions of the reads in the read file
+    robin_hood::unordered_map<std::string, long int> read_positions;
+    std::ifstream read_stream(input_reads);
+    string line;
+    long int position = 0;
+    auto pos = read_stream.tellg();
+    while (std::getline(read_stream, line)){
+        pos = read_stream.tellg();
+        if (line[0] == '>' || line[0] == '@'){
+            std::istringstream iss(line);
+            std::string token;
+            iss >> token;
+            read_positions[token.substr(1)] = pos;
+        }
+    }
+
+    //blacklist all the reads that were used to build the bridges and the piers
+    std::set<string> blacklist;
+    for (auto solid_bridge : solid_bridges){
+        for (auto read_name : solid_bridge.read_names){
+            blacklist.insert(read_name);
+        }
+    }
+    for (auto end_contig : solid_piers){
+        for (auto read_name : end_contig.read_names){
+            blacklist.insert(read_name);
+        }
+    }
+
+    string tmp_unaligned_reads = "tmp_unaligned_reads.fasta";
+    //go through the gaf file: output the well-aligned alignments in tmp_gaf_file and all the other in tmp_unaligned_reads
+    std::ifstream gaf_stream(gaf_file);
+    std::ofstream unaligned_reads(tmp_unaligned_reads);
+    std::set<string> set_unaligned_reads;
+
+    while (std::getline(gaf_stream, line)){
+        string name_of_read;
+        int length_of_read;
+        int start_of_mapping;
+        int end_of_mapping;
+        string strand;
+        string path;
+        int path_length;
+        int path_start;
+        int path_end;
+        string nothing;
+        int quality;
+
+        std::istringstream iss(line);
+        iss >> name_of_read >> length_of_read >> start_of_mapping >> end_of_mapping >> strand >> path >> path_length >> path_start >> path_end >> nothing >> nothing >> quality;
+
+        int min_length_for_breakpoint = min(0.2*length_of_read, 100.0); //minimum length of overhang to consider a breakpoint
+        if ((start_of_mapping > min_length_for_breakpoint || length_of_read-end_of_mapping > min_length_for_breakpoint) && quality == 60 && set_unaligned_reads.find(name_of_read) == set_unaligned_reads.end() 
+            && blacklist.find(name_of_read) == blacklist.end()) //read is not mapped end to end ! (or is blacklisted because it should be aligned end-to-end -> to ensure the program finishes)
+        {        
+            set_unaligned_reads.insert(name_of_read);
+            unaligned_reads << ">" << name_of_read << endl;
+            std::ifstream read_stream(input_reads);
+            read_stream.seekg(read_positions[name_of_read]);
+            std::getline(read_stream, line); 
+            unaligned_reads << line << endl;
+            read_stream.close();
+        }
+    }
+    gaf_stream.close();
+    unaligned_reads.close();
+
+    //now run minigraph on the assembly and the unaligned reads
+    auto minigraph_run = system((path_minigraph + " -c --secondary=no -t " + std::to_string(num_threads) + " " + input_assembly + " " + tmp_unaligned_reads + " >" + gaf_file + " 2> logminigraph.gt.txt").c_str());
+    if (minigraph_run != 0){
+        std::cerr << "Error running minigraph" << std::endl;
+        std::cerr << "Command: " << path_minigraph + " -c --secondary=no -t " + std::to_string(num_threads) + " " + input_assembly + " " + tmp_unaligned_reads + " >" + gaf_file + " 2> logminigraph.gt.txt" << std::endl;
+        exit(1);
+    }
+
+    //remove the temporary files
+    remove(tmp_unaligned_reads.c_str());
+}
+
+/**
+ * @brief Align the reads on the new graph and deduce the coverage of all contigs
+ * 
+ * @param assembly 
+ * @param output_assembly 
+ * @param reads 
+ * @param num_threads 
+ */
+void last_cleanup(std::string& input_assembly, std::string& output_assembly, std::string& reads, std::string& gaf_file, std::string& path_minigraph, int num_threads){
+    
+
+    auto minimap_run = system((path_minigraph + " --secondary=no -t " + std::to_string(num_threads) + " " + input_assembly + " " + reads + " >" + gaf_file + " 2> logminigraph.gt.txt").c_str());
+    if (minimap_run != 0){
+        std::cerr << "Error running minimap: GGY" << std::endl;
+        std::cerr << "Command: " << path_minigraph + " --secondary=no -t " + std::to_string(num_threads) + " " + input_assembly + " " + reads + " >" + gaf_file + " 2> logminigraph.gt.txt" << std::endl;
+        exit(1);
+    }
+
+    //index the name and length of the contigs
+    robin_hood::unordered_map<std::string, int> length_of_contigs;
+    std::ifstream assembly_stream(input_assembly);
+    string line;
+    while (std::getline(assembly_stream, line)){
+        if (line[0] == 'S'){
+            std::istringstream iss(line);
+            std::string token;
+            std::string name_of_contig;
+            iss >> token;
+            iss >> name_of_contig;
+            string sequence;
+            iss >> sequence;
+
+            length_of_contigs[name_of_contig] = sequence.size();
+        }
+    }
+
+    //now go through the gaf file and compute the coverage of all the contigs
+    robin_hood::unordered_map<std::string, double> coverage_of_contigs;
+    robin_hood::unordered_map<std::string, bool> well_alignness_of_contigs;
+    std::ifstream paf_stream(gaf_file);
+    while (std::getline(paf_stream, line)){
+        string name_of_read;
+        int length_of_read;
+        int start_of_mapping;
+        int end_of_mapping;
+        string strand;
+        string path;
+        int path_length;
+        int path_start;
+        int path_end;
+        string nothing;
+        int quality;
+
+        std::istringstream iss(line);
+        iss >> name_of_read >> length_of_read >> start_of_mapping >> end_of_mapping >> strand >> path >> path_length >> path_start >> path_end >> nothing >> nothing >> quality;
+
+        if (quality == 60){
+
+            //split the path on > and <
+            vector<string> contigs;
+            string current_contig;
+            for (auto c : path){
+                if (c == '<' || c == '>'){
+                    if (current_contig.size() > 0){
+                        contigs.push_back(current_contig);
+                        current_contig = "";
+                    }
+                }
+                else{
+                    current_contig += c;
+                }
+            }
+            contigs.push_back(current_contig);
+
+            if (contigs.size() > 1){
+                //now add the coverage of the read to the coverage of the contigs
+                int total_length = 0;
+                //begin by the first contig
+                if (coverage_of_contigs.find(contigs[0]) == coverage_of_contigs.end()){
+                    coverage_of_contigs[contigs[0]] = 0;
+                }
+                coverage_of_contigs[contigs[0]] += 1-(path_start/(double)length_of_contigs[contigs[0]]);
+                total_length += length_of_contigs[contigs[0]];
+
+                //now the middle contigs
+                for (int c = 1 ; c < contigs.size()-1 ; c++){
+                    if (coverage_of_contigs.find(contigs[c]) == coverage_of_contigs.end()){
+                        coverage_of_contigs[contigs[c]] = 0;
+                    }
+                    coverage_of_contigs[contigs[c]] += 1;
+                    total_length += length_of_contigs[contigs[c]];
+                }
+
+                //now the last contig
+            
+                if (coverage_of_contigs.find(contigs[contigs.size()-1]) == coverage_of_contigs.end()){
+                    coverage_of_contigs[contigs[contigs.size()-1]] = 0;
+                }
+                coverage_of_contigs[contigs[contigs.size()-1]] += (path_end-total_length)/(double)length_of_contigs[contigs[contigs.size()-1]];
+            }
+            else{
+                if (coverage_of_contigs.find(contigs[0]) == coverage_of_contigs.end()){
+                    coverage_of_contigs[contigs[0]] = 0;
+                }
+                coverage_of_contigs[contigs[0]] += (path_end-path_start)/(double)length_of_contigs[contigs[0]];
+            }
+
+        }
+    }
+
+    //now output the assembly with dp and ln tags, leaving out the contigs with a coverage of 0
+    std::ofstream output_stream(output_assembly);
+    assembly_stream = std::ifstream (input_assembly);
+    std::set<string> contigs_with_enough_coverage;
+
+    while (std::getline(assembly_stream, line)){
+        if (line[0] == 'S'){
+            std::istringstream iss(line);
+            std::string token;
+            std::string name_of_contig;
+            iss >> token;
+            iss >> name_of_contig;
+            string sequence;
+            iss >> sequence;
+
+            if (coverage_of_contigs.find(name_of_contig) != coverage_of_contigs.end() && coverage_of_contigs[name_of_contig] > 1){
+                output_stream << "S\t" << name_of_contig << "\t" << sequence << "\tDP:f:" << coverage_of_contigs[name_of_contig] << "\tLN:i:" << length_of_contigs[name_of_contig] << endl;
+                contigs_with_enough_coverage.insert(name_of_contig);
+            }
+        }
+        else if (line[0] == 'L'){
+            std::istringstream iss(line);
+            std::string token;
+            std::string name1, name2, orientation1, orientation2, cigar;
+            iss >> token >> name1 >> orientation1 >> name2 >> orientation2 >> cigar;
+            if (contigs_with_enough_coverage.find(name1) != contigs_with_enough_coverage.end() && contigs_with_enough_coverage.find(name2) != contigs_with_enough_coverage.end()){
+                output_stream << line << endl;
+            }
+        }
+        else{
+            output_stream << line << endl;
+        }
+    }
+    output_stream.close();
+    assembly_stream.close();
+}
+
 int main(int argc, char *argv[])
 {
+    //just check which reads are well aligned in "tmp_last_cleanup.gaf"
+    // int num_well_aligned_readsz = 0;
+    // int num_partially_aligned_readsz = 0;
+    // int num_unaligned_readsz = 0;
+    // string gagaf = "tmp_last_cleanup.gaf";
+    // // gagaf = "reads_aligned_on_assembly.gaf";
+    // string reads = "filtered_30000.fastq";
+    // check_which_reads_are_well_aligned(gagaf, reads, num_well_aligned_readsz, num_partially_aligned_readsz, num_unaligned_readsz);
+    // cout << "ECICIC " << num_well_aligned_readsz << " " << num_partially_aligned_readsz << " " << num_unaligned_readsz << endl;
+    // exit(1);
 
     //build a clipp.h command line parser
     bool help = false;
@@ -1568,7 +1899,6 @@ int main(int argc, char *argv[])
         }
     }
 
-
     std::string input_assembly_format = input_assembly.substr(input_assembly.find_last_of(".") + 1);
     std::string input_reads_format = input_reads.substr(input_reads.find_last_of(".") + 1);
     std::string output_scaffold_format = output_scaffold.substr(output_scaffold.find_last_of(".") + 1);
@@ -1627,45 +1957,136 @@ int main(int argc, char *argv[])
         }
         // cout << "NOT RUNNING MINIGRPAH, TO BE REMOVED" << endl;
         //delete the log file
-        // system("rm logminigraph.gt.txt");
+        system("rm logminigraph.gt.txt");
     }    
 
+    //count the number of reads that align end-to-end, partially and not at all
+    int num_well_aligned_reads_start, num_partially_aligned_reads_start, num_unaligned_reads_start;
+    check_which_reads_are_well_aligned(gaf_file, input_reads, num_well_aligned_reads_start, num_partially_aligned_reads_start, num_unaligned_reads_start);
+
     //reassemble unaligned reads with raven
-    cout << "1) Reassembling the unaligned reads with raven..." << endl;
+    cout << "Reassembling the unaligned reads with raven..." << endl;
     string assembly_completed = "tmp_assembly_completed.gfa";
     string gaf_completed = "tmp_gaf_completed.gaf";
     reassemble_unaligned_reads(gaf_file, input_reads, input_assembly, assembly_completed, gaf_completed, path_to_raven, path_minigraph, num_threads);
+    // cout << "NOT RUNNING RAVEN, TO BE REMOVED" << endl;
 
-    //inventoriate the bridges
-    cout << endl << "2) Going through the gaf file and listing the reads that do not align end-to-end on the assembly graph..." << endl;
-    std::vector<Bridge> bridges;
-    std::vector<Pier> piers;
-    inventoriate_bridges_and_piers(gaf_completed, bridges, piers, assembly_completed);
+    cout << "\n==== Now looping and iteratively modify the GFA until all reads align end-to-end on the assembly graph ====" << endl;
+    bool some_reads_still_unaligned = true;
+    int iteration = 0;
+    while (some_reads_still_unaligned){
 
-    //agregate the bridges
-    cout << "3) Pooling the reads that display similar behaviour on the assembly graph..." << endl;
-    std::vector<SolidBridge> solid_bridges;
-    std::vector<SolidPier> solid_piers;
-    agregate_bridges_and_piers(bridges, piers, solid_bridges, solid_piers, 1000, min_num_reads_for_link);
+        cout << endl << " Loop iteration " << iteration++ << "... " << endl;
 
-    //transform the solid bridges into links in the assembly
-    cout << "4) Computing the exact location of new links in the GFA and gap-filling if necessary..." << endl;
-    std::vector<Link> links;
-    std::vector<End_contig> end_contigs;
-    transform_bridges_in_links(solid_bridges, input_reads, assembly_completed, links, path_minimap2, path_racon);
-    build_piers(solid_piers, input_reads, assembly_completed, end_contigs, path_minimap2, path_racon);
+        //inventoriate the bridges
+        cout << "  - Going through the gaf file and listing the reads that do not align end-to-end on the assembly graph..." << endl;
+        std::vector<Bridge> bridges;
+        std::vector<Pier> piers;
+        inventoriate_bridges_and_piers(gaf_completed, bridges, piers, assembly_completed);
 
-    //create a gfa file from the assembly and the links
-    cout << "5) Outputting the new assembly..." << endl;
-    string tmp_gfa = "tmp_drt_gfa.gfa";
-    create_gfa(assembly_completed, tmp_gfa, links, end_contigs);
+        //agregate the bridges
+        cout << "  - Pooling the reads that display similar behaviour on the assembly graph..." << endl;
+        std::vector<SolidBridge> solid_bridges;
+        std::vector<SolidPier> solid_piers;
+        agregate_bridges_and_piers(bridges, piers, solid_bridges, solid_piers, 1000, min_num_reads_for_link);
+        // cout << "found " << solid_bridges.size() << " solid bridges and " << solid_piers.size() << " solid piers." << endl;
+        // cout << "here they are, sorted by alphabetical number of the first contig " << endl;
+        // std::sort(solid_bridges.begin(), solid_bridges.end(), [](SolidBridge a, SolidBridge b) {return (a.contig1 < b.contig1 || (a.contig1==b.contig1 && a.position1 < b.position1));});
+        // for (auto i : solid_bridges){
+        //     cout << i.contig1 << " " << i.position1 << " " << i.contig2 << " " << i.position2 << " " << std::set<string>(i.read_names.begin(), i.read_names.end()).size() << " " << i.read_names[0] << endl;
+        // }
+        // for (auto i : solid_piers){
+        //     cout << i.contig << " " << i.position << " " << i.read_names.size() << endl;
+        // }
+        // cout << "qio*******************" << endl << endl;
+        // exit(1);
 
-    //shave the graph of small dead ends, that probably result from polishing errors
-    cout << "6) Shaving the graph of small dead ends and popping small bubbles that may have appeared in previous steps..." << endl;
-    shave_and_pop(tmp_gfa, output_scaffold, 60, 20);
+        if ((solid_piers.size() == 0 && solid_bridges.size() == 0)){
+            some_reads_still_unaligned = false;
+            cout << "\n==== Graph cannot be improved further. Moving on to the last step, computing the coverage ====\n" << endl;
+            break;
+        }
+        else{
+            cout << "  - Found " << solid_bridges.size() << " solid bridges and " << solid_piers.size() << " solid piers." << endl;
+        }
 
-    //remove the temporary gfa file
-    system(("rm " + tmp_gfa).c_str());
+        //transform the solid bridges into links in the assembly
+        cout << "  - Computing the exact location of new links in the GFA and gap-filling if necessary..." << endl;
+        std::vector<Link> links;
+        std::vector<End_contig> end_contigs;
+        transform_bridges_in_links(solid_bridges, input_reads, assembly_completed, links, path_minimap2, path_racon);
+        build_piers(solid_piers, input_reads, assembly_completed, end_contigs, path_minimap2, path_racon);
+
+        //create a gfa file from the assembly and the links
+        cout << "  - Outputting the new assembly..." << endl;
+        string tmp_gfa = "tmp_drt_gfa.gfa";
+        create_gfa(assembly_completed, tmp_gfa, links, end_contigs);
+
+        //shave the graph of small dead ends, that probably result from polishing errors
+        cout << "  - Shaving the graph of small dead ends and popping small bubbles that may have appeared in previous steps..." << endl;
+        shave_and_pop(tmp_gfa, output_scaffold, 60, 20);
+        system(("cp " + output_scaffold + " " + assembly_completed).c_str()); //so that the next iteration starts from the new assembly
+
+        //realign the reads on the new assembly
+        cout << "  - Realigning the reads on the new assembly..." << endl;
+        realign_reads_on_assembly(solid_bridges, solid_piers, assembly_completed, input_reads, gaf_completed, path_minigraph, num_threads); //the new result is stored in gaf_completed
+
+        //remove the temporary gfa file
+        system(("rm " + tmp_gfa).c_str());
+
+    }
+
+    //remove the temporary files
+    // system(("rm " + assembly_completed).c_str());
+    // system(("rm " + gaf_completed).c_str());
+
+    cout << "Re-aligning the reads on the final assembly to compute coverage and remove all non-covered contigs..." << endl;
+    int num_well_aligned_reads = 0;
+    int num_partially_aligned_reads = 0;
+    int num_unaligned_reads = 0;
+    string final_gaf = "tmp_last_cleanup.gaf";
+    last_cleanup(assembly_completed, output_scaffold, input_reads, final_gaf, path_minigraph, num_threads);
+
+    //count the number of reads that align end-to-end, partially and not at all
+    check_which_reads_are_well_aligned(final_gaf, input_reads, num_well_aligned_reads, num_partially_aligned_reads, num_unaligned_reads);
+
+    //print the number of reads that aligned end-to-end, partially and not at all before and after 
+    cout << "____________________________________________________________________________________________________" << endl;
+    cout << "|                                           |    Before GenomeTailor    |    After GenomeTailor    |" << endl;
+    cout << "|-------------------------------------------|---------------------------|--------------------------|" << endl;
+    string num_well_aligned_reads_start_str = std::to_string(num_well_aligned_reads_start);
+    cout << "|    Number of end-to-end aligned reads     | " << num_well_aligned_reads_start_str;
+    for (int i = 0 ; i < 25-num_well_aligned_reads_start_str.size() ; i++){
+        cout << " ";
+    }
+    cout << " | " << num_well_aligned_reads;
+    for (int i = 0 ; i < 25-std::to_string(num_well_aligned_reads).size() ; i++){
+        cout << " ";
+    }
+    cout << "|" << endl;
+
+    string num_partially_aligned_reads_start_str = std::to_string(num_partially_aligned_reads_start);
+    cout << "|    Number of jumping reads                | " << num_partially_aligned_reads_start_str;
+    for (int i = 0 ; i < 25-num_partially_aligned_reads_start_str.size() ; i++){
+        cout << " ";
+    }
+    cout << " | " << num_partially_aligned_reads;
+    for (int i = 0 ; i < 25-std::to_string(num_partially_aligned_reads).size() ; i++){
+        cout << " ";
+    }
+    cout << "|" << endl;
+
+    string num_unaligned_reads_start_str = std::to_string(num_unaligned_reads_start);
+    cout << "|    Number of unaligned reads              | " << num_unaligned_reads_start_str;
+    for (int i = 0 ; i < 25-num_unaligned_reads_start_str.size() ; i++){
+        cout << " ";
+    }
+    cout << " | " << num_unaligned_reads;
+    for (int i = 0 ; i < 25-std::to_string(num_unaligned_reads).size() ; i++){
+        cout << " ";
+    }
+    cout << "|" << endl;
+    cout << "----------------------------------------------------------------------------------------------------" << endl;
 
     cout << endl << "Done! Customer service at github.com/RolandFaure/GenomeTailor" << endl;
 }

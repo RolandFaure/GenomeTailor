@@ -1,5 +1,7 @@
 # GenomeTailor
 
+GenomeTailor edits the assembly graph in GFA format to make sure all reads align end-to-end on the graph. It also deletes the regions that are not covered by any reads. Currently under development and not very stable, if you need to perfect your assemblies I advise you write to me.
+
 ## Installation
 
 ### Dependencies

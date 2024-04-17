@@ -1948,35 +1948,20 @@ int main(int argc, char *argv[])
     system("rm trash.tmp");
 
     // Print the table of dependencies
-    if (gaf_file == ""){
-        std::cout << "_______________________________" << std::endl;
-        std::cout << "|    Dependency     |  Found  |" << std::endl;
-        std::cout << "|-------------------|---------|" << std::endl;
-        std::cout << "|    minigraph      |   " << (minigraph_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
-        std::cout << "|    minimap2       |   " << (minimap_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
-        std::cout << "|    racon          |   " << (racon_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
-        std::cout << "|    raven          |   " << (raven_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
-        std::cout << "-------------------------------" << std::endl;
+    std::cout << "_______________________________" << std::endl;
+    std::cout << "|    Dependency     |  Found  |" << std::endl;
+    std::cout << "|-------------------|---------|" << std::endl;
+    std::cout << "|    minigraph      |   " << (minigraph_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
+    std::cout << "|    minimap2       |   " << (minimap_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
+    std::cout << "|    racon          |   " << (racon_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
+    std::cout << "|    raven          |   " << (raven_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
+    std::cout << "-------------------------------" << std::endl;
 
-        if (!minimap_ok || !minigraph_ok || !racon_ok || !raven_ok){
-            std::cout << "Error: some dependencies are missing. Please install them or provide a valid path with the options." << std::endl;
-            return 1;
-        }
+    if (!minimap_ok || !minigraph_ok || !racon_ok || !raven_ok){
+        std::cout << "Error: some dependencies are missing. Please install them or provide a valid path with the options." << std::endl;
+        return 1;
     }
-    else {
-        std::cout << "_______________________________" << std::endl;
-        std::cout << "|    Dependency     |  Found  |" << std::endl;
-        std::cout << "|-------------------|---------|" << std::endl;
-        std::cout << "|    minimap2       |   " << (minimap_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
-        std::cout << "|    racon          |   " << (racon_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
-        std::cout << "|    raven          |   " << (raven_ok ? GREEN_TEXT "Yes" : RED_TEXT "No ") << RESET_TEXT "   |" << std::endl;
-        std::cout << "-------------------------------" << std::endl;
 
-        if (!minimap_ok || !racon_ok || !raven_ok){
-            std::cout << "Error: some dependencies are missing. Please install them or provide a valid path with the options." << std::endl;
-            return 1;
-        }
-    }
 
     std::string input_assembly_format = input_assembly.substr(input_assembly.find_last_of(".") + 1);
     std::string input_reads_format = input_reads.substr(input_reads.find_last_of(".") + 1);
@@ -2085,7 +2070,9 @@ int main(int argc, char *argv[])
             std::vector<SolidBridge> solid_bridges;
             std::vector<SolidPier> solid_piers;
             agregate_bridges_and_piers(bridges, piers, solid_bridges, solid_piers, 1000, min_num_reads_for_link);
-            output_errors(error_file, solid_bridges, solid_piers);
+            if (iteration == 0){
+                output_errors(error_file, solid_bridges, solid_piers);
+            }
 
             // cout << "found " << solid_bridges.size() << " solid bridges and " << solid_piers.size() << " solid piers." << endl;
             // cout << "here they are, sorted by alphabetical number of the first contig " << endl;

@@ -210,10 +210,12 @@ void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std
     string raven_asm = "tmp_raven_asm.fa";
     string command = path_raven + " " + file_of_unaligned_reads + " -t " + std::to_string(threads) + " > " + raven_asm + " 2> raven.log";
     int res = system(command.c_str());
-    // if (res != 0){ //if raven fails it means that there was nothing to assemble
-    //     cout << RED_TEXT << "ERROR: raven failed to reassemble the unaligned parts of the reads" << RESET_TEXT << endl;
-    //     exit(1);
-    // }
+    if (res != 0){
+        cout << RED_TEXT << "ERROR: raven failed to reassemble the unaligned parts of the reads" << RESET_TEXT << endl;
+        cout << "Command was: " << command << endl;
+        exit(1);
+    }
+    cout << "raven command line: " << command << endl;
 
     //read the assembly file (fasta format) and add all the new contigs to the new_assembly_file (gfa format)
     std::ifstream raven_asm_stream(raven_asm);
@@ -276,15 +278,12 @@ void reassemble_unaligned_reads(std::string gaf_file, std::string read_file, std
     system(("mv " + new_new_gaf_file + " " + new_gaf_file).c_str());
 
     //remove the temporary files
-    // system(("rm " + raven_asm).c_str());
-    // system("rm raven.cereal");
-    // system(("rm " + file_of_unaligned_reads).c_str());
-    // system(("rm " + file_of_full_unaligned_reads).c_str());
-    // system("rm raven.log");
-    // system("rm minigraph.log");
-    // cout << "Reassembled " << unaligned_reads.size() << " reads" << endl;
-    // cout << "New assembly and gaf files are " << new_assembly_file << " and " << new_gaf_file << endl;
-    // exit(0);
+    system(("rm " + raven_asm).c_str());
+    system("rm raven.cereal");
+    system(("rm " + file_of_unaligned_reads).c_str());
+    system(("rm " + file_of_full_unaligned_reads).c_str());
+    system("rm raven.log");
+    system("rm minigraph.log");
 
 }
 
@@ -1287,16 +1286,28 @@ int main(int argc, char *argv[])
     bool input_assembly_is_gfa = (input_assembly_format == "gfa");
     bool input_reads_is_fasta = (input_reads_format == "fasta" || input_reads_format == "fa");
     bool input_reads_is_fastq = (input_reads_format == "fastq" || input_reads_format == "fq");
+    bool input_assembly_exists = (std::ifstream(input_assembly).good());
+    bool input_reads_exists = (std::ifstream(input_reads).good()); 
     bool output_scaffold_is_gfa = (output_scaffold_format == "gfa");
     bool gaf_file_is_gaf = (gaf_file.substr(gaf_file.find_last_of(".") + 1) == "gaf");
 
     cout << "Checking file formats..." << endl;
     //print a table of the input and output files
     std::cout << "_________________________________" << std::endl;
-    std::cout << "|       File        |  Format   |" << std::endl;
+    std::cout << "|       File        | Format ok |" << std::endl;
     std::cout << "|-------------------|-----------|" << std::endl;
-    std::cout << "|  input_assembly   |  " << (input_assembly_is_gfa ? GREEN_TEXT "  gfa  " : RED_TEXT "not gfa") << RESET_TEXT "  |" << std::endl;
-    std::cout << "|  input_reads      |" << (input_reads_is_fasta || input_reads_is_fastq ? GREEN_TEXT "  fasta/q  " : RED_TEXT "not fasta/q") << RESET_TEXT "|" << std::endl;
+    if (input_assembly_exists){
+        std::cout << "|  input_assembly   |  " << (input_assembly_is_gfa ? GREEN_TEXT "  gfa  " : RED_TEXT "not gfa") << RESET_TEXT "  |" << std::endl;
+    }
+    else{
+        std::cout << "|  input_assembly   | " << RED_TEXT "not found" << RESET_TEXT " |" << std::endl;
+    }
+    if (input_reads_exists){
+        std::cout << "|  input_reads      |" << (input_reads_is_fasta || input_reads_is_fastq ? GREEN_TEXT "  fasta/q  " : RED_TEXT "not fasta/q") << RESET_TEXT "|" << std::endl;
+    }
+    else{
+        std::cout << "|  input_reads      | " << RED_TEXT "not found" << RESET_TEXT " |" << std::endl;
+    }
     std::cout << "|  output_scaffold  |  " << (output_scaffold_is_gfa ? GREEN_TEXT "  gfa  " : RED_TEXT "not gfa") << RESET_TEXT "  |" << std::endl;
     if (gaf_file != ""){
         std::cout << "|  gaf_file         |  " << (gaf_file_is_gaf ? GREEN_TEXT "  gaf  " : RED_TEXT "not gaf") << RESET_TEXT "  |" << std::endl;
@@ -1305,6 +1316,10 @@ int main(int argc, char *argv[])
 
     if (!input_assembly_is_gfa || (!input_reads_is_fasta && !input_reads_is_fastq) || !output_scaffold_is_gfa || (gaf_file != "" && !gaf_file_is_gaf)){
         std::cout << "Error: some input or output files are not in the right format. Please check the format and try again." << std::endl;
+        return 1;
+    }
+    if (!input_assembly_exists || !input_reads_exists){
+        std::cout << "Error: some input files are missing. Please check the file paths and try again." << std::endl;
         return 1;
     }
 
@@ -1320,7 +1335,7 @@ int main(int argc, char *argv[])
         }
         // cout << "NOT RUNNING MINIGRPAH, TO BE REMOVED" << endl;
         //delete the log file
-        system("rm logminigraph.gt.txt");
+        // system("rm logminigraph.gt.txt");
     }    
 
     //reassemble unaligned reads with raven

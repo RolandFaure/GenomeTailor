@@ -33,8 +33,8 @@ using std::max;
 #define GREEN_TEXT "\033[1;32m"
 #define RESET_TEXT "\033[0m"
 
-string version = "0.3.0";
-string last_update = "2024-03-15";
+string version = "0.3.1";
+string last_update = "2024-05-02";
 
 vector<string> split(string& s, string& delimiter){
     vector<string> res;
@@ -509,9 +509,9 @@ void inventoriate_bridges_and_piers(std::string gaf_file, std::vector<Bridge>& b
                 if (mapping.second[b+1].pos_on_read1-mapping.second[b].pos_on_read2 < 0){
                     int overlap_length = mapping.second[b].pos_on_read2 - mapping.second[b+1].pos_on_read1;
                     if (overlap_length < 0.1*(mapping.second[b].pos_on_read2-mapping.second[b].pos_on_read1) && overlap_length < 0.1*(mapping.second[b+1].pos_on_read2-mapping.second[b+1].pos_on_read1)){
-                        //choose which overlap to trim based on alphabetical order of the contigs
-                        if (mapping.second[b].contig2 < mapping.second[b+1].contig1){
-                            mapping.second[b].pos_on_read2 -= overlap_length;
+                        //choose which overlap to trim based on which contig is the longest
+                        if (length_of_contigs[mapping.second[b].contig2] < length_of_contigs[mapping.second[b+1].contig1]){
+                            mapping.second[b].pos_on_read2 -= min((int) length_of_contigs[mapping.second[b].contig2]-1, overlap_length);
                             if (mapping.second[b].orientation_on_contig2 == false){
                                 mapping.second[b].position_on_contig2 += overlap_length;
                             }
@@ -520,7 +520,7 @@ void inventoriate_bridges_and_piers(std::string gaf_file, std::vector<Bridge>& b
                             }
                         }
                         else{
-                            mapping.second[b+1].pos_on_read1 += overlap_length;
+                            mapping.second[b+1].pos_on_read1 += min((int) length_of_contigs[mapping.second[b+1].contig1]-1, overlap_length);
                             if (mapping.second[b+1].orientation_on_contig1 == false){
                                 mapping.second[b+1].position_on_contig1 += overlap_length;
                             }
@@ -799,6 +799,7 @@ void transform_bridges_in_links(std::vector<SolidBridge>& solid_bridges, std::st
         std::getline(assembly_stream, line);
         std::istringstream iss2(line);
         iss2 >> nothing >> nothing >> seq_2;
+        cout << "retrieving the contig right of the jucntion " << solid_bridge.position2 << endl;
         if (solid_bridge.strand2 == true){
             int overhang_2 = min(200, solid_bridge.position2);
             contig2_sequence = reverse_complement(seq_2.substr(solid_bridge.position2-overhang_2, overhang_2));

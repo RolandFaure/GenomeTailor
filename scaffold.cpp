@@ -1912,41 +1912,6 @@ void output_errors(string error_file, std::vector<SolidBridge>& solid_bridges, s
 
 int main(int argc, char *argv[])
 {
-
-    string gaf_completed2 = "tmp_last_cleanup.gaf";
-    string assembly_completed2 = "tmp_assembly_completed.gfa";
-    vector<Bridge> bridges2;
-    vector<Pier> piers2;
-    int num_well_aligned_reads_end2 = 0;
-    int num_partially_aligned_reads_end2 = 0;
-    int num_jumpings_reads_end2 = 0;
-    int num_undetected_duplex_reads_end2 = 0;
-    std::set<string> list_of_duplex_reads2;
-
-    inventoriate_bridges_and_piers(gaf_completed2, bridges2, piers2, assembly_completed2, num_well_aligned_reads_end2, num_partially_aligned_reads_end2, num_jumpings_reads_end2, num_undetected_duplex_reads_end2, list_of_duplex_reads2);
-    cout << "well aligned reads: " << num_well_aligned_reads_end2 << endl;
-    cout << "partially aligned reads: " << num_partially_aligned_reads_end2 << endl;
-    cout << "jumping reads: " << num_jumpings_reads_end2 << endl;
-    cout << "undetected duplex reads: " << num_undetected_duplex_reads_end2 << endl;
-
-    gaf_completed2 = "reads_aligned_on_assembly.gaf";
-    assembly_completed2 = "assembly.gfa";
-    num_well_aligned_reads_end2 = 0;
-    num_partially_aligned_reads_end2 = 0;
-    num_jumpings_reads_end2 = 0;
-    num_undetected_duplex_reads_end2 = 0;
-    list_of_duplex_reads2.clear();
-    cout << endl;
-    inventoriate_bridges_and_piers(gaf_completed2, bridges2, piers2, assembly_completed2, num_well_aligned_reads_end2, num_partially_aligned_reads_end2, num_jumpings_reads_end2, num_undetected_duplex_reads_end2, list_of_duplex_reads2);
-    cout << "well aligned reads: " << num_well_aligned_reads_end2 << endl;
-    cout << "partially aligned reads: " << num_partially_aligned_reads_end2 << endl;
-    cout << "jumping reads: " << num_jumpings_reads_end2 << endl;
-    cout << "undetected duplex reads: " << num_undetected_duplex_reads_end2 << endl;
-
-
-
-    exit(1);
-
     //just check which reads are well aligned in "tmp_last_cleanup.gaf"
     // int num_well_aligned_readsz = 0;
     // int num_partially_aligned_readsz = 0;
@@ -2282,12 +2247,13 @@ int main(int argc, char *argv[])
         int num_partially_aligned_reads_end = 0;
         int num_jumpings_reads_end = 0;
         int num_undetected_duplex_reads_end = 0;
+        int num_unaligned_reads_end = 0;
         std::set<string> list_of_duplex_reads2;
         inventoriate_bridges_and_piers(final_gaf, bridges2, piers2, assembly_completed, num_well_aligned_reads_end, num_partially_aligned_reads_end, num_jumpings_reads_end, num_undetected_duplex_reads_end, list_of_duplex_reads2);
  
 
         //count the number of reads that align end-to-end, partially and not at all
-        count_unaligned_reads(final_gaf, input_reads, num_unaligned_reads);
+        count_unaligned_reads(final_gaf, input_reads, num_unaligned_reads_end);
 
         //print the number of reads that aligned end-to-end, partially and not at all before and after 
         cout << "____________________________________________________________________________________________________" << endl;
@@ -2298,52 +2264,48 @@ int main(int argc, char *argv[])
         for (int i = 0 ; i < 25-num_well_aligned_reads_start_str.size() ; i++){
             cout << " ";
         }
-        cout << " | " << num_well_aligned_reads;
-        for (int i = 0 ; i < 25-std::to_string(num_well_aligned_reads).size() ; i++){
+        cout << " | " << num_well_aligned_reads_end;
+        for (int i = 0 ; i < 25-std::to_string(num_well_aligned_reads_end).size() ; i++){
             cout << " ";
         }
         cout << "|" << endl;
 
-        string num_undetected_duplex_reads_end_str = std::to_string(num_undetected_duplex_reads_end);
-        cout << "|    Number of undetected duplex reads      | " << num_undetected_duplex_reads_end_str;
-        for (int i = 0 ; i < 25-num_undetected_duplex_reads_end_str.size() ; i++){
-            cout << " ";
-        }
-        cout << " | " << num_undetected_duplex_reads_start;
+        cout << "|    Number of undetected duplex reads      | " << num_undetected_duplex_reads_start;
         for (int i = 0 ; i < 25-std::to_string(num_undetected_duplex_reads_start).size() ; i++){
             cout << " ";
         }
-        cout << "|" << endl;
-
-        string num_jumpings_reads_end_str = std::to_string(num_jumpings_reads_end);
-        cout << "|    Number of jumping reads                 | " << num_jumpings_reads_end_str;
-        for (int i = 0 ; i < 25-num_jumpings_reads_end_str.size() ; i++){
+        cout << " | " << num_undetected_duplex_reads_end;
+        for (int i = 0 ; i < 25-std::to_string(num_undetected_duplex_reads_end).size() ; i++){
             cout << " ";
         }
-        cout << " | " << num_jumpings_reads_start;
+        cout << "|" << endl;
+
+        cout << "|    Number of jumping reads                | " << num_jumpings_reads_start;
         for (int i = 0 ; i < 25-std::to_string(num_jumpings_reads_start).size() ; i++){
             cout << " ";
         }
-        cout << "|" << endl;
-
-        string num_partially_aligned_reads_start_str = std::to_string(num_partially_aligned_reads_start);
-        cout << "|    Number of partially aligned reads       | " << num_partially_aligned_reads_start_str;
-        for (int i = 0 ; i < 25-num_partially_aligned_reads_start_str.size() ; i++){
-            cout << " ";
-        }
-        cout << " | " << num_partially_aligned_reads;
-        for (int i = 0 ; i < 25-std::to_string(num_partially_aligned_reads).size() ; i++){
+        cout << " | " << num_jumpings_reads_end;
+        for (int i = 0 ; i < 25-std::to_string(num_jumpings_reads_end).size() ; i++){
             cout << " ";
         }
         cout << "|" << endl;
 
-        string num_unaligned_reads_start_str = std::to_string(num_unaligned_reads_start);
-        cout << "|    Number of unaligned reads              | " << num_unaligned_reads_start_str;
-        for (int i = 0 ; i < 25-num_unaligned_reads_start_str.size() ; i++){
+        cout << "|    Number of partially aligned reads      | " << num_partially_aligned_reads_start;
+        for (int i = 0 ; i < 25-std::to_string(num_partially_aligned_reads_start).size() ; i++){
             cout << " ";
         }
-        cout << " | " << num_unaligned_reads;
-        for (int i = 0 ; i < 25-std::to_string(num_unaligned_reads).size() ; i++){
+        cout << " | " << num_partially_aligned_reads_end;
+        for (int i = 0 ; i < 25-std::to_string(num_partially_aligned_reads_end).size() ; i++){
+            cout << " ";
+        }
+        cout << "|" << endl;
+
+        cout << "|    Number of unaligned reads              | " << num_unaligned_reads_start;
+        for (int i = 0 ; i < 25-std::to_string(num_unaligned_reads_start).size() ; i++){
+            cout << " ";
+        }
+        cout << " | " << num_unaligned_reads_end;
+        for (int i = 0 ; i < 25-std::to_string(num_unaligned_reads_end).size() ; i++){
             cout << " ";
         }
         cout << "|" << endl;

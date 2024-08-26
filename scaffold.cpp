@@ -33,8 +33,8 @@ using std::max;
 #define GREEN_TEXT "\033[1;32m"
 #define RESET_TEXT "\033[0m"
 
-string version = "0.3.4";
-string last_update = "2024-08-23";
+string version = "0.3.5";
+string last_update = "2024-08-26";
 
 vector<string> split(string& s, string& delimiter){
     vector<string> res;
@@ -565,7 +565,7 @@ void inventoriate_bridges_and_piers(std::string gaf_file, std::vector<Bridge>& b
                     //do not consider the reads that do "half-turns" on the contigs right in the middle of the reads, this is an artefact of sequencing (undetected duplex reads)
                     if (bridge.contig1 != bridge.contig2 || abs(bridge.position1-bridge.position2) > 1000 || bridge.strand1 != bridge.strand2 || abs(bridge.pos_read_on_contig1-mapping.second[0].length_of_read/2) > 0.1*mapping.second[0].length_of_read){
                         bridges.push_back(bridge);
-                        cout << "duplex read: " << mapping.first << endl;
+                        // cout << "duplex read: " << mapping.first << endl;
                         bridge_or_not = true;
                     }
                     else{
@@ -2111,7 +2111,7 @@ int main(int argc, char *argv[])
     }
     if (overlaps_found){
         string blunt_asm = path_tmp_folder + "bluntified_assembly.gfa";
-        cout << RED_TEXT "WARNING:" << RESET_TEXT " the input assembly contains overlaps other than 0M. GenomeTailor will try to bluntify the graph, but will trust blindly the CIGARs and fail. Please check the bluntified assembly at " 
+        cout << RED_TEXT "WARNING:" << RESET_TEXT " the input assembly contains overlaps other than 0M. GenomeTailor will try to bluntify the graph, but will trust blindly the CIGARs and sometimes delete link to achieve bluntification. Please check the bluntified assembly at " 
             << blunt_asm << ". A better option could be to use gimbricate+seqwish." << endl;
         auto bluntify_run = system((path_bluntify + " -t -n " + input_assembly + " " + blunt_asm).c_str());
         if (bluntify_run != 0){

@@ -7,7 +7,6 @@ date = "2024-08-22"
 import argparse
 import sys
 import re
-import edlib #for the alignment
 
 def reverse_complement(seq):
     complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A', 'N': 'N'}
@@ -176,6 +175,7 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
     list_of_links = [] #each link is a tuple (name1, end1, overlap1, name2, end2, overlap2)
     set_of_already_appended_links = set() #to avoid duplicates
     location_of_contigs_in_gfa = {}
+    coverage = {} #associates to each contig the coverage
 
     with open(gfa_in, "r") as gfa_open:
         line = gfa_open.readline()
@@ -187,6 +187,11 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
                 length = len(fields[2])
                 length_of_contigs[name] = length
                 location_of_contigs_in_gfa[name] = gfa_open.tell() - len(line)
+                #find the coverage field
+                for field in fields:
+                    if field.upper().startswith("DP:"):
+                        coverage[name] = field
+                        break
             elif line.startswith("L"):
                 fields = line.strip().split("\t")
                 name1 = fields[1]
@@ -226,6 +231,8 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
 
             line = gfa_open.readline()
 
+    print(coverage)
+
     new_list_of_contigs = {}
     new_list_of_links = []
     contigs_already_dealt_with = set()
@@ -257,23 +264,25 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
             contigs_already_dealt_with.add(contig)
 
             breakpoints = list_breakpoints_left+list_breakpoints_right
-            breakpoints.sort(key= lambda x : x[0])
+            breakpoints.sort(key= lambda x : x[0]) #sort by breakpoints, then put the links left berfore the links right
             
-            # if contig == "utg000037l":
-            #     print("breakpoints ", contig, " ", breakpoints)
-
-            # # create all the new contigs
+            # create all the new contigs
             new_contig_name = ""
             for sub in range(0,len(breakpoints)):  
                     
                 if sub > 0 and breakpoints[sub-1][0] != breakpoints[sub][0] :
+
                     new_contig_name = contig + "_" + str(breakpoints[sub-1][0]) + "_" + str(breakpoints[sub][0])
-                    n=1
-                    while breakpoints[sub][0] == breakpoints[sub-n][0]:
+                    n=2
+                    while sub-n >= 0 and breakpoints[sub-1][0] == breakpoints[sub-n][0]:
                         n+=1
-                    past_contig_name = contig + "_" + str(breakpoints[sub-n][0]) + "_" + str(breakpoints[sub][0])
-                    new_list_of_links.append([new_contig_name, 0, 0, past_contig_name, 1, 0])
-                    new_list_of_contigs[new_contig_name] = [[len(new_list_of_links)-1],[]]
+                    if sub-n >= 0:
+                        past_contig_name = contig + "_" + str(breakpoints[sub-n][0]) + "_" + str(breakpoints[sub-1][0])
+
+                        new_list_of_links.append([new_contig_name, 0, 0, past_contig_name, 1, 0])
+                        new_list_of_contigs[new_contig_name] = [[len(new_list_of_links)-1],[]]
+                    else:
+                        new_list_of_contigs[new_contig_name] = [[],[]]
                 
                 if sub == 0:
                     n = 1
@@ -298,29 +307,29 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
                     if link[0] == -1:
                         continue
 
-                    if (link[0] == contig and link[1] == 1) or (link[3] == contig and link[4] == 1):
-                        
-                        n=1
-                        while breakpoints[sub][0] == breakpoints[sub-n][0]:
-                            n+=1
-                        new_contig_name = contig + "_" + str(breakpoints[sub-n][0]) + "_" + str(breakpoints[sub][0])
-                        if link[0] == contig:
-                            link[0] = new_contig_name
-                        if link[3] == contig:
-                            link[3] = new_contig_name
-                        new_list_of_links.append(link)
-                        new_list_of_contigs[new_contig_name][1].append(len(new_list_of_links)-1)
-                    else:
+                    if (link[0] == contig and link[1] == 0) or (link[3] == contig and link[4] == 0):
                         n = 1
                         while str(breakpoints[sub][0]) == str(breakpoints[sub+n][0]):
                             n+=1
                         future_contig_name = contig + "_" + str(breakpoints[sub][0]) + "_" + str(breakpoints[sub+n][0])
-                        if link[0] == contig:
+                        if link[0] == contig and link[1] == 0:
                             link[0] = future_contig_name
-                        if link[3] == contig:
+                        elif link[3] == contig and link[4] == 0:
                             link[3] = future_contig_name
                         new_list_of_links.append(link)
                         new_list_of_contigs[future_contig_name][0].append(len(new_list_of_links)-1)
+                        
+                    else:
+                        n=1
+                        while breakpoints[sub][0] == breakpoints[sub-n][0]:
+                            n+=1
+                        new_contig_name = contig + "_" + str(breakpoints[sub-n][0]) + "_" + str(breakpoints[sub][0])
+                        if link[0] == contig and link[1] == 1:
+                            link[0] = new_contig_name
+                        if link[3] == contig and link[4] == 1:
+                            link[3] = new_contig_name
+                        new_list_of_links.append(link)
+                        new_list_of_contigs[new_contig_name][1].append(len(new_list_of_links)-1)
     
                     # if "utg000037l" in link[0] or "utg000037l" in link[3]:
                     #     # print(breakpoints)
@@ -364,7 +373,6 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
             else:
                 link[3] = old_contigs_to_new_contigs[link[3]][1]
 
-
     #now output the new GFA
     fo = open(gfa_out, "w")
     new_contigs_length = {}
@@ -382,7 +390,11 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
 
         #output the new contig
         if int(right) - int(left) >= short_contig_length:
-            fo.write("S\t"+contig+"\t"+seq[int(left):int(right)]+"\n")
+            fo.write("S\t"+contig+"\t"+seq[int(left):int(right)]+"\t")
+            if original_name in coverage:
+                fo.write(coverage[original_name]+"\n")
+            else:
+                fo.write("\n")
         new_contigs_length[contig] = int(right) - int(left)
 
     for contig in new_list_of_contigs.keys():
@@ -408,9 +420,13 @@ def main():
     parser.add_argument("input", help="input GFA file")
     parser.add_argument("output", help="output GFA file")
     parser.add_argument("-t", "--trust", action="store_true", help="trust the overlaps")
-    parser.add_argument("-n", "--no_overlaps", action="store_true", help="At the end, transform all remaining reads in 0M")
+    parser.add_argument("-n", "--no_overlaps", action="store_true", help="At the end, cut all links which we have not been able to bluntify")
     parser.add_argument("--version", action="version", version="%(prog)s " + version)
     args = parser.parse_args()
+
+    if not args.trust:
+        import edlib #for the alignment
+
 
     intermediate_gfa = "intermediate_gfa.tmp.gfa"
     basic_overlap_removal(args.input, intermediate_gfa, args.trust)

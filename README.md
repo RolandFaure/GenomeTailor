@@ -28,9 +28,13 @@ cd test
 ## Usage
 
 ```
+build/GenomeTailor 
 SYNOPSIS
-        build/GenomeTailor -i <input_assembly> -r <input_reads> -o <output_assembly> [-g <gaf_file>]
-                           [-n <minigraph>] [-m <minimap2>] [-r <racon>] [-h] [-v]
+        build/GenomeTailor -i <input_assembly> -r <input_reads> -m <mode> [-e <output_errors>] [-o
+                           <output_assembly>] [-d <output_non_duplexed_reads>] [-p
+                           <path-to-tmp-folder>] [-b <minimum-number-of-reads>] [-t <threads>] [-g
+                           <gaf_file>] [--minigraph <minigraph>] [--minimap2 <minimap2>] [--racon
+                           <racon>] [--path-to-raven <path-to-raven>] [-h] [-v]
 
 OPTIONS
         -i, --input_assembly
@@ -39,20 +43,37 @@ OPTIONS
         -r, --input_reads
                     input reads in fasta/q format
 
+        -m, --mode  mode: correct or detect
+        -e, --output_errors
+                    output file describing the errors found in the assembly
+
         -o, --output_assembly
-                    output assembly in gfa format
+                    output assembly in gfa format (required if correct mode)
+
+        -d, --output_non_duplexed_reads
+                    file to output a file of non-duplexed reads
+
+        -p, --path-to-tmp-folder
+                    path to a temporary folder where the intermediate files will be stored [./]
+
+        -b, --minimum-number-of-reads
+                    minimum number of reads to support a breakpoint [5]
+
+        -t, --threads
+                    number of threads to use for minigraph [1]
 
         -g, --gaf_file
-                    gaf file. Will be generated with minigraph if not provided
+                    gaf file if already computed (NO SECONDARY ALIGNMENTS). Will be generated with
+                    minigraph if not provided
 
-        -n, --minigraph
-                    path to minigraph
+        --minigraph path to minigraph
+        --minimap2  path to minimap2
+        --racon     path to racon
+        --path-to-raven
+                    path to raven
 
-        -m, --minimap2
-                    path to minimap2
-
-        -r, --racon path to racon
         -h, --help  print this help message and exit
         -v, --version
                     print version information and exit
+
 ```

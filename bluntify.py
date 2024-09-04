@@ -231,8 +231,6 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
 
             line = gfa_open.readline()
 
-    print(coverage)
-
     new_list_of_contigs = {}
     new_list_of_links = []
     contigs_already_dealt_with = set()

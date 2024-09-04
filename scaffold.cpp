@@ -33,7 +33,7 @@ using std::max;
 #define GREEN_TEXT "\033[1;32m"
 #define RESET_TEXT "\033[0m"
 
-string version = "0.3.5";
+string version = "0.3.6";
 string last_update = "2024-08-26";
 
 vector<string> split(string& s, string& delimiter){
@@ -1904,14 +1904,15 @@ int main(int argc, char *argv[])
     //build a clipp.h command line parser
     bool help = false;
     bool print_version = false;
-    string input_assembly, input_reads, gaf_file, output_scaffold, error_file, correct_string;
+    string input_assembly, input_reads, gaf_file, output_scaffold, correct_string;
     int num_threads = 1;
     int min_num_reads_for_link = 5;
+    string error_file = "errors_detected_by_genome_tailor.txt";
     string path_minigraph = "minigraph";
     string path_minimap2 = "minimap2";
     string path_racon = "racon";
     string path_to_raven = "raven";
-    string path_tmp_folder = "./";
+    string path_tmp_folder = "./tmp_genome_tailor/";
     string path_new_reads = "";
     string path_bluntify = "python3 bluntify.py";
 
@@ -1919,13 +1920,13 @@ int main(int argc, char *argv[])
         clipp::required("-i", "--input_assembly").doc("input assembly in gfa format") & clipp::value("input_assembly", input_assembly),
         clipp::required("-r", "--input_reads").doc("input reads in fasta/q format") & clipp::value("input_reads", input_reads),
         clipp::required("-m", "--mode").doc("mode: correct or detect") & clipp::value("mode", correct_string),
-        clipp::required("-e", "--output_errors").doc("output file describing the errors found in the assembly") & clipp::value("output_errors", error_file),
+        clipp::option("-e", "--output_errors").doc("output file describing the errors found in the assembly") & clipp::value("output_errors", error_file),
         clipp::option("-o", "--output_assembly").doc("output assembly in gfa format (required if correct mode)") & clipp::value("output_assembly", output_scaffold),
         clipp::option("-d", "--output_non_duplexed_reads").doc("file to output a file of non-duplexed reads") & clipp::value("output_non_duplexed_reads", path_new_reads),
         clipp::option("-p", "--path-to-tmp-folder").doc("path to a temporary folder where the intermediate files will be stored [./]") & clipp::value("path-to-tmp-folder", path_tmp_folder),
         clipp::option("-b", "--minimum-number-of-reads").doc("minimum number of reads to support a breakpoint [5]") & clipp::value("minimum-number-of-reads", min_num_reads_for_link),
         clipp::option("-t", "--threads").doc("number of threads to use for minigraph [1]") & clipp::value("threads", num_threads),
-        clipp::option("-g", "--gaf_file").doc("gaf file (NO SECONDARY ALIGNMENTS). Will be generated with minigraph if not provided") & clipp::value("gaf_file", gaf_file),
+        clipp::option("-g", "--gaf_file").doc("gaf file if already computed (NO SECONDARY ALIGNMENTS). Will be generated with minigraph if not provided") & clipp::value("gaf_file", gaf_file),
         clipp::option("--minigraph").doc("path to minigraph") & clipp::value("minigraph", path_minigraph),
         clipp::option("--minimap2").doc("path to minimap2") & clipp::value("minimap2", path_minimap2),
         clipp::option("--racon").doc("path to racon") & clipp::value("racon", path_racon),
@@ -2039,6 +2040,23 @@ int main(int argc, char *argv[])
     if (!minimap_ok || !minigraph_ok || !racon_ok || !raven_ok){
         std::cout << "Error: some dependencies are missing. Please install them or provide a valid path with the options." << std::endl;
         return 1;
+    }
+
+    //if input reads are gzipped, unzip them
+    if (input_reads.substr(input_reads.find_last_of(".") + 1) == "gz"){
+        int pos_of_last_slash = 0;
+        for (int i = 0 ; i < input_reads.size() ; i++){
+            if (input_reads[i] == '/'){
+                pos_of_last_slash = i;
+            }
+        }
+        string new_reads = input_reads.substr(pos_of_last_slash, input_reads.size()-pos_of_last_slash-3);
+        auto gunzip_run = system(("gunzip -c " + input_reads+ " >" + path_tmp_folder + new_reads ).c_str() );
+        if (gunzip_run != 0){
+            cout << "Error: could not unzip the reads. Please provide a non-gzipped file and try again." << endl;
+            return 1;
+        }
+        input_reads = path_tmp_folder + new_reads;
     }
 
 

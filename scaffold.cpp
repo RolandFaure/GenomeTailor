@@ -33,8 +33,8 @@ using std::max;
 #define GREEN_TEXT "\033[1;32m"
 #define RESET_TEXT "\033[0m"
 
-string version = "0.3.6";
-string last_update = "2024-08-26";
+string version = "0.4.0";
+string last_update = "2025-07-30";
 
 vector<string> split(string& s, string& delimiter){
     vector<string> res;
@@ -2114,7 +2114,7 @@ int main(int argc, char *argv[])
     //check that the input graph does not contain overlaps other than 0M. If so, remove them at your own risk using bluntify.py
     std::ifstream input(input_assembly);
     string line;
-    bool overlaps_found = false;
+    bool overlaps_or_0_length_found = false;
     while (std::getline(input, line)){
         if (line[0] == 'L'){
             std::istringstream iss(line);
@@ -2122,18 +2122,39 @@ int main(int argc, char *argv[])
             std::string name1, name2, orientation1, orientation2, cigar;
             iss >> token >> name1 >> orientation1 >> name2 >> orientation2 >> cigar;
             if (cigar != "0M"){
-                overlaps_found = true;
+                overlaps_or_0_length_found = true;
                 break;
             }
         }
+        if (line[0] == 'S'){
+            std::istringstream iss(line);
+            std::string token;
+            std::string name, sequence;
+            iss >> token >> name;
+            // Check for contigs of length 0: either line ends or next char is a tab (i.e., empty sequence)
+            char next = iss.peek();
+            if (next == '\n' || next == '\r') {
+                std::cout << RED_TEXT "WARNING: Contig " << name << " has length 0!" RESET_TEXT << std::endl;
+                overlaps_or_0_length_found = true;
+            } else if (next == '\t') {
+                iss.get(); // consume the first tab
+                char next2 = iss.peek();
+                // do not consume next2, just peek at it
+                if (next2 == '\t' || next2 == '\n' || next2 == '\r' || next2 == -1) {
+                    std::cout << RED_TEXT "WARNING: Contig " << name << " has length 0!" RESET_TEXT << std::endl;
+                    overlaps_or_0_length_found = true;
+                }
+            }
+        }
     }
-    if (overlaps_found){
+    if (overlaps_or_0_length_found){
         string blunt_asm = path_tmp_folder + "bluntified_assembly.gfa";
         cout << RED_TEXT "WARNING:" << RESET_TEXT " the input assembly contains overlaps other than 0M. GenomeTailor will try to bluntify the graph, but will trust blindly the CIGARs and sometimes delete link to achieve bluntification. Please check the bluntified assembly at " 
             << blunt_asm << ". A better option could be to use gimbricate+seqwish." << endl;
-        auto bluntify_run = system((path_bluntify + " -t -n " + input_assembly + " " + blunt_asm).c_str());
+        string command = path_bluntify + " --tmpdir " + path_tmp_folder + " -t -n " + input_assembly + " " + blunt_asm;
+        auto bluntify_run = system(command.c_str());
         if (bluntify_run != 0){
-            cout << "Error: bluntify.py failed. Was trying to run" << endl<< path_bluntify + " -t -d " + input_assembly + " " + blunt_asm << endl;
+            cout << "Error: bluntify.py failed. Was trying to run" << endl<< command << endl;
         }
         input_assembly = blunt_asm;
     }

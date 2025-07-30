@@ -27,7 +27,9 @@ def basic_overlap_removal(gfa_in, gfa_out, trust):
                 fields = line.strip().split("\t")
                 name = fields[1]
                 list_of_contigs[name] = ([],[])
-                length = len(fields[2])
+                length = 0
+                if len(fields) > 2:
+                    length = len(fields[2])
                 location_of_contigs_in_gfa[name] = gfa_open.tell() - len(line)
                 length_of_contigs[name] = length
             elif line.startswith("L"):
@@ -148,7 +150,10 @@ def basic_overlap_removal(gfa_in, gfa_out, trust):
     for line in fi:
         if line[0] == "S" :
             ls = line.strip().split('\t')
-            fo.write("S\t"+ls[1]+"\t"+ls[2][trimmed_lengths[ls[1]][0]:length_of_contigs[ls[1]]-trimmed_lengths[ls[1]][1]]+"\t"+"\t".join(ls[3:])+"\n")
+            seq = ""
+            if len(ls) > 2:
+                seq = ls[2]
+            fo.write("S\t"+ls[1]+"\t"+seq[trimmed_lengths[ls[1]][0]:length_of_contigs[ls[1]]-trimmed_lengths[ls[1]][1]]+"\t"+"\t".join(ls[3:])+"\n")
     for contig in list_of_contigs.keys():
         #output all links then delete them 
         for link_idx in list_of_contigs[contig][0]:
@@ -184,7 +189,9 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
                 fields = line.strip().split("\t")
                 name = fields[1]
                 list_of_contigs[name] = ([],[])
-                length = len(fields[2])
+                length = 0
+                if len(fields) > 2:
+                    length = len(fields[2])
                 length_of_contigs[name] = length
                 location_of_contigs_in_gfa[name] = gfa_open.tell() - len(line)
                 #find the coverage field
@@ -369,7 +376,7 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
             if link[4] == 0:
                 link[3] = old_contigs_to_new_contigs[link[3]][0]
             else:
-                link[3] = old_contigs_to_new_contigs[link[3]][1]
+                link[3] = old_contigs_to_new_contigs[link[3]][1]    
 
     #now output the new GFA
     fo = open(gfa_out, "w")
@@ -379,7 +386,9 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
         open2 = open(gfa_in, "r")
         original_name = "_".join(contig.split("_")[:-2])
         open2.seek(location_of_contigs_in_gfa[original_name])
-        seq = open2.readline().strip().split("\t")[2]
+        ls = open2.readline().strip().split("\t")
+        if len(ls) > 2 :
+            seq = ls[2]
         open2.close()
 
         #now take the last two parts of the name to get the breakpoints
@@ -412,6 +421,99 @@ def fancier_overlap_removal(gfa_in, gfa_out, say_0M_no_matter_what = False, shor
                 new_list_of_links[link_idx][0] = "None"
 
     fo.close()
+
+def remove_contigs_of_length_0(gfa_in, gfa_out):
+    #we don't want contigs of lengths 0: when you see them, link all neighbors left with all neighbors right and exit
+    with open(gfa_in, "r") as fi:
+        contig_seqs = {}
+        contig_lines = {}
+        links = []
+        for line in fi:
+            if line.startswith("S"):
+                fields = line.strip().split("\t")
+                name = fields[1]
+                seq = ""
+                if len(fields) > 2:
+                    seq = fields[2]
+                contig_seqs[name] = seq
+                contig_lines[name] = line
+            elif line.startswith("L"):
+                fields = line.strip().split("\t")
+                links.append(fields)
+
+    # Find contigs of length 0
+    zero_length_contigs = {name for name, seq in contig_seqs.items() if len(seq) == 0}
+
+    # Build neighbor maps for all contigs
+    left_neighbors = {name: set() for name in contig_seqs}
+    right_neighbors = {name: set() for name in contig_seqs}
+    for fields in links:
+        from_name = fields[1]
+        to_name = fields[3]
+        from_orient = fields[2]
+        to_orient = fields[4]
+        if from_orient == "+":
+            right_neighbors[from_name].add((to_name, "-" if to_orient=="+" else "+"))
+        else:
+            left_neighbors[from_name].add((to_name, "-" if to_orient=="+" else "+"))
+        if to_orient == "+":
+            left_neighbors[to_name].add((from_name, from_orient))
+        else:
+            right_neighbors[to_name].add((from_name, from_orient))
+
+    # For each zero-length contig, link all right neighbors with all left neighbors
+    new_links = []
+    for zero_contig in zero_length_contigs:
+        for left_neighbor, left_orient in left_neighbors[zero_contig]:
+            for right_neighbor, right_orient in right_neighbors[zero_contig]:
+
+                if left_neighbor == zero_contig or right_neighbor == zero_contig:
+                    continue
+
+                if left_orient == "+":
+                    right_neighbors[left_neighbor].add((right_neighbor, right_orient))
+                else:
+                    left_neighbors[left_neighbor].add((right_neighbor, right_orient))
+
+                if left_neighbor != right_neighbor or left_orient != right_orient: # Avoid duplicate links
+                    if right_orient == "-":
+                        left_neighbors[right_neighbor].add((left_neighbor, left_orient))
+                    else:
+                        right_neighbors[right_neighbor].add((left_neighbor, left_orient))
+
+    # Write new GFA without zero-length contigs, and with new links
+    with open(gfa_out, "w") as fo:
+        # Write non-zero-length contigs
+        for name, line in contig_lines.items():
+            if name not in zero_length_contigs:
+                fo.write(line)
+
+    # Write all links except those involving zero-length contigs
+    with open(gfa_out, "a") as fo:
+        # Write all links between non-zero-length contigs by iterating over neighbor sets
+        written_links = set()
+        for from_name in contig_seqs:
+            if from_name in zero_length_contigs:
+                continue
+            # Write right neighbors
+            for to_name, to_orient in right_neighbors[from_name]:
+                if to_name in zero_length_contigs:
+                    continue
+                link_tuple = (from_name, "+", to_name, to_orient)
+                # Avoid duplicates (since links are bidirectional)
+                if link_tuple not in written_links:
+                    fo.write(f"L\t{from_name}\t+\t{to_name}\t{"-" if to_orient=="+" else "+"}\t0M\n")
+                    written_links.add(link_tuple)
+                    written_links.add((to_name, to_orient, from_name, "+"))
+            # Write left neighbors
+            for to_name, to_orient in left_neighbors[from_name]:
+                if to_name in zero_length_contigs:
+                    continue
+                link_tuple = (from_name, "-", to_name, to_orient)
+                if link_tuple not in written_links:
+                    fo.write(f"L\t{from_name}\t-\t{to_name}\t{"-" if to_orient=="+" else "+"}\t0M\n")
+                    written_links.add(link_tuple)
+                    written_links.add((to_name, to_orient, from_name, "-"))
                 
 def main():
     parser = argparse.ArgumentParser(description="Bluntify a GFA file")
@@ -419,6 +521,7 @@ def main():
     parser.add_argument("output", help="output GFA file")
     parser.add_argument("-t", "--trust", action="store_true", help="trust the overlaps")
     parser.add_argument("-n", "--no_overlaps", action="store_true", help="At the end, cut all links which we have not been able to bluntify")
+    parser.add_argument("--tmpdir", default=".", help="Directory to store temporary files")
     parser.add_argument("--version", action="version", version="%(prog)s " + version)
     args = parser.parse_args()
 
@@ -426,9 +529,12 @@ def main():
         import edlib #for the alignment
 
 
-    intermediate_gfa = "intermediate_gfa.tmp.gfa"
+    intermediate_gfa = args.tmpdir + "/intermediate_gfa.tmp.gfa"
     basic_overlap_removal(args.input, intermediate_gfa, args.trust)
-    fancier_overlap_removal(intermediate_gfa, args.output, say_0M_no_matter_what=args.no_overlaps)
+    fancier_overlap_removal(intermediate_gfa, intermediate_gfa + ".fancy.gfa", say_0M_no_matter_what=args.no_overlaps)
+    remove_contigs_of_length_0(intermediate_gfa + ".fancy.gfa", args.output)
+
+
 
     
 if __name__ == "__main__":
